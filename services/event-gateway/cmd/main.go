@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
@@ -9,14 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Aniket25042003/Dugout/services/event-gateway/internal/db"
+	"github.com/Aniket25042003/Dugout/services/event-gateway/internal/server"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 )
 
 type Config struct {
-	Port     string
-	NatsURL  string
-	DbURL    string
+	Port    string
+	NatsURL string
+	DbURL   string
 }
 
 func main() {
@@ -47,11 +50,11 @@ func main() {
 	log.Printf("Connected to NATS at %s", cfg.NatsURL)
 
 	// 3. Connect to Database
-	var db *sql.DB
+	var dbConn *sql.DB
 	for i := 0; i < 5; i++ {
-		db, err = sql.Open("postgres", cfg.DbURL)
+		dbConn, err = sql.Open("postgres", cfg.DbURL)
 		if err == nil {
-			err = db.Ping()
+			err = dbConn.Ping()
 			if err == nil {
 				break
 			}
@@ -62,29 +65,29 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not connect to database: %v", err)
 	}
-	defer db.Close()
+	defer dbConn.Close()
 	log.Println("Connected to database successfully.")
 
-	// 4. Setup routes
+	// 4. Initialize components
+	eventDb := db.New(dbConn)
+	gatewayServer := server.New(eventDb, nc)
+
+	if err := gatewayServer.Start(context.Background()); err != nil {
+		log.Fatalf("Failed to start gateway NATS subscriber: %v", err)
+	}
+	defer gatewayServer.Stop()
+
+	// 5. Setup routes
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"healthy","service":"event-gateway"}`))
 	})
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Placeholder for WebSocket handler
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("WebSocket handler not implemented yet"))
-	})
+	http.HandleFunc("/api/v1/events", gatewayServer.IngestEvent)
+	http.HandleFunc("/api/v1/games/stream", gatewayServer.SSEStream)
 
-	http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		// Placeholder for Server-Sent Events handler
-		w.WriteHeader(http.StatusNotImplemented)
-		w.Write([]byte("SSE events handler not implemented yet"))
-	})
-
-	server := &http.Server{
+	serverHttp := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: nil,
 	}
@@ -92,7 +95,7 @@ func main() {
 	// Start server in background
 	go func() {
 		log.Printf("HTTP Server listening on port %s", cfg.Port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := serverHttp.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("ListenAndServe failed: %v", err)
 		}
 	}()
@@ -103,7 +106,12 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down Event Gateway...")
-	server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	if err := serverHttp.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server Shutdown failed: %v", err)
+	}
 	log.Println("Event Gateway stopped.")
 }
 

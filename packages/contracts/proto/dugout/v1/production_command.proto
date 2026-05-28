@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  COMMAND_STATUS_QUEUED = 1;
+  COMMAND_STATUS_STARTED = 2;
+  COMMAND_STATUS_COMPLETED = 3;
+  COMMAND_STATUS_FAILED = 4;
+  COMMAND_STATUS_CANCELLED = 5;
+}
+
+message PlayWalkupMusicPayload {
+  string player_id = 1;
+  string asset_id = 2;
+  int32 fade_in_ms = 3;
+  int32 max_duration_ms = 4;
+}
+
+message UpdateScoreboardPayload {
+  int32 home_score = 1;
+  int32 away_score = 2;
+  int32 inning = 3;
+  bool is_top = 4;
+  int32 balls = 5;
+  int32 strikes = 6;
+  int32 outs = 7;
+  string batter_name = 8;
+  string pitcher_name = 9;
+  float pitch_speed_mph = 10;
+  string display_template = 11;    // 'batter_intro', 'pitcher_intro', 'count', etc.
+}
+
+message GenerateCommentaryPayload {
+  string text = 1;
+  string tts_asset_id = 2;
+  bool play_audio = 3;
+}
+
+message TriggerAlertPayload {
+  string alert_type = 1;            // "low_cv_confidence", "duplicate_event", etc.
+  string message = 2;
+  double confidence = 3;
+  string entity_id = 4;             // The ID of the event or observation causing the alert
+}
+
+message ProductionCommand {
+  string command_id = 1;
+  string game_id = 2;
+  string command_type = 3;          // "play_walkup_music", "update_scoreboard", etc.
+  string target = 4;                // "music_adapter", "graphics_adapter", etc.
+  google.protobuf.Timestamp created_at = 5;
+  repeated string source_event_ids = 6;
+  bool requires_manager_confirmation = 7;
+  CommandStatus status = 8;
+
+  oneof payload {
+    PlayWalkupMusicPayload play_walkup_music = 9;
+    UpdateScoreboardPayload update_scoreboard = 10;
+    GenerateCommentaryPayload generate_commentary = 11;
+    TriggerAlertPayload trigger_alert = 12;
+  }
+}

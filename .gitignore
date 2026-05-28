@@ -1,0 +1,79 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node / TypeScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+dist/
+build/
+.cache/
+.expo/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+.env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work.sum
+
+# Environment Variables & Keys
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+
+# Docker
+.docker-temp/
+data/postgres/
+data/nats/
+data/redis/
+data/mediamtx/

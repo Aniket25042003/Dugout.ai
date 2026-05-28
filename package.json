@@ -1,0 +1,20 @@
+{
+  "name": "dugout-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dugout.ai - Automated Baseball Game-Day AI Production System",
+  "workspaces": [
+    "apps/dashboard",
+    "apps/referee-mobile",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "dashboard:dev": "npm run dev --workspace=apps/dashboard",
+    "dashboard:build": "npm run build --workspace=apps/dashboard",
+    "referee:start": "npm run start --workspace=apps/referee-mobile",
+    "contracts:build": "npm run build --workspace=packages/contracts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

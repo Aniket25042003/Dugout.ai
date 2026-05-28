@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+import "google/protobuf/timestamp.proto";
+import "dugout/v1/common.proto";
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+message JerseyNumberPayload {
+  string jersey_number = 1;
+  TeamSide team_side = 2;
+  BoundingBox bbox = 3;
+  string track_id = 4;
+}
+
+message PlayerLocalizationPayload {
+  string track_id = 1;
+  BoundingBox bbox = 2;
+  TeamSide team_side = 3;
+}
+
+message ModelMetadata {
+  string name = 1;
+  string version = 2;
+  string runtime = 3;
+}
+
+message CvObservation {
+  string observation_id = 1;
+  string game_id = 2;
+  string camera_id = 3;
+  google.protobuf.Timestamp observed_at = 4;
+  string observation_type = 5;      // e.g. "jersey_number", "player_localization"
+  double confidence = 6;
+  ModelMetadata model = 7;
+
+  oneof payload {
+    JerseyNumberPayload jersey_number = 8;
+    PlayerLocalizationPayload player_localization = 9;
+  }
+}

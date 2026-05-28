@@ -1,0 +1,109 @@
+[
+  {
+    "event_id": "evt_001_game_start",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "manager_dashboard",
+    "source_device_id": "manager_macbook",
+    "event_type": "game_start",
+    "occurred_at": "2026-05-28T19:00:00.000Z",
+    "received_at": "2026-05-28T19:00:00.100Z",
+    "sequence": 1,
+    "payload": {
+      "home_team_id": "team_ashland",
+      "away_team_id": "team_opponent",
+      "venue_id": "venue_stadium_1"
+    },
+    "confidence": 1.0,
+    "authority": "manager"
+  },
+  {
+    "event_id": "evt_002_batter_up",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "referee_app",
+    "source_device_id": "ref_phone_1",
+    "event_type": "batter_up",
+    "occurred_at": "2026-05-28T19:01:00.000Z",
+    "received_at": "2026-05-28T19:01:00.150Z",
+    "sequence": 2,
+    "payload": {
+      "batter_id": "player_ashland_17",
+      "pitcher_id": "player_opponent_22",
+      "jersey_number": "17"
+    },
+    "confidence": 1.0,
+    "authority": "official"
+  },
+  {
+    "event_id": "evt_003_pitch_strike",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "referee_app",
+    "source_device_id": "ref_phone_1",
+    "event_type": "pitch_result",
+    "occurred_at": "2026-05-28T19:01:30.000Z",
+    "received_at": "2026-05-28T19:01:30.120Z",
+    "sequence": 3,
+    "payload": {
+      "result": "strike_looking",
+      "pitcher_id": "player_opponent_22",
+      "batter_id": "player_ashland_17",
+      "speed_mph": 88.5
+    },
+    "confidence": 1.0,
+    "authority": "official"
+  },
+  {
+    "event_id": "evt_004_pitch_ball",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "referee_app",
+    "source_device_id": "ref_phone_1",
+    "event_type": "pitch_result",
+    "occurred_at": "2026-05-28T19:02:00.000Z",
+    "received_at": "2026-05-28T19:02:00.110Z",
+    "sequence": 4,
+    "payload": {
+      "result": "ball",
+      "pitcher_id": "player_opponent_22",
+      "batter_id": "player_ashland_17",
+      "speed_mph": 91.2
+    },
+    "confidence": 1.0,
+    "authority": "official"
+  },
+  {
+    "event_id": "evt_005_pitch_foul",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "referee_app",
+    "source_device_id": "ref_phone_1",
+    "event_type": "pitch_result",
+    "occurred_at": "2026-05-28T19:02:30.000Z",
+    "received_at": "2026-05-28T19:02:30.150Z",
+    "sequence": 5,
+    "payload": {
+      "result": "foul",
+      "pitcher_id": "player_opponent_22",
+      "batter_id": "player_ashland_17",
+      "speed_mph": 85.0
+    },
+    "confidence": 1.0,
+    "authority": "official"
+  },
+  {
+    "event_id": "evt_006_pitch_single",
+    "game_id": "game_2026_ashland_vs_opponent",
+    "source": "referee_app",
+    "source_device_id": "ref_phone_1",
+    "event_type": "play_outcome",
+    "occurred_at": "2026-05-28T19:03:00.000Z",
+    "received_at": "2026-05-28T19:03:00.200Z",
+    "sequence": 6,
+    "payload": {
+      "type": "single",
+      "runs_scored": 0,
+      "outs_recorded": 0,
+      "batter_id": "player_ashland_17",
+      "description": "Line drive to center field"
+    },
+    "confidence": 1.0,
+    "authority": "official"
+  }
+]

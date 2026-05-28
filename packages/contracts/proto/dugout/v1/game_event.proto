@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+import "google/protobuf/timestamp.proto";
+import "dugout/v1/common.proto";
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+enum PitchResultType {
+  PITCH_RESULT_TYPE_UNSPECIFIED = 0;
+  PITCH_RESULT_TYPE_BALL = 1;
+  PITCH_RESULT_TYPE_STRIKE_LOOKING = 2;
+  PITCH_RESULT_TYPE_STRIKE_SWINGING = 3;
+  PITCH_RESULT_TYPE_FOUL = 4;
+  PITCH_RESULT_TYPE_PUT_IN_PLAY = 5;
+  PITCH_RESULT_TYPE_HIT_BY_PITCH = 6;
+}
+
+enum PlayOutcomeType {
+  PLAY_OUTCOME_TYPE_UNSPECIFIED = 0;
+  PLAY_OUTCOME_TYPE_OUT = 1;
+  PLAY_OUTCOME_TYPE_SINGLE = 2;
+  PLAY_OUTCOME_TYPE_DOUBLE = 3;
+  PLAY_OUTCOME_TYPE_TRIPLE = 4;
+  PLAY_OUTCOME_TYPE_HOME_RUN = 5;
+  PLAY_OUTCOME_TYPE_WALK = 6;
+  PLAY_OUTCOME_TYPE_REACHED_ON_ERROR = 7;
+  PLAY_OUTCOME_TYPE_FIELDERS_CHOICE = 8;
+}
+
+enum ClockAction {
+  CLOCK_ACTION_UNSPECIFIED = 0;
+  CLOCK_ACTION_START = 1;
+  CLOCK_ACTION_STOP = 2;
+  CLOCK_ACTION_RESET = 3;
+}
+
+message PitchResultPayload {
+  PitchResultType result = 1;
+  string pitcher_id = 2;
+  string batter_id = 3;
+  float speed_mph = 4;
+}
+
+message PlayOutcomePayload {
+  PlayOutcomeType type = 1;
+  int32 runs_scored = 2;
+  int32 outs_recorded = 3;
+  string batter_id = 4;
+  string description = 5;
+}
+
+message InningTransitionPayload {
+  int32 inning_number = 1;
+  bool is_top = 2; // true = top, false = bottom
+}
+
+message SubstitutionPayload {
+  string team_id = 1;
+  string player_in_id = 2;
+  string player_out_id = 3;
+  string position = 4;
+}
+
+message ClockControlPayload {
+  ClockAction action = 1;
+  int32 set_time_seconds = 2;
+}
+
+message GameCorrectionPayload {
+  int32 balls = 1;
+  int32 strikes = 2;
+  int32 outs = 3;
+  int32 home_score = 4;
+  int32 away_score = 5;
+  string reason = 6;
+}
+
+message ManualOverridePayload {
+  string override_type = 1;         // e.g. "confirm_player_identity"
+  string original_id = 2;           // e.g. observation ID or command ID
+  string selected_player_id = 3;
+  string reason = 4;
+}
+
+message GameEvent {
+  string event_id = 1;
+  string game_id = 2;
+  string source = 3;                // e.g. "referee_app", "manager_dashboard"
+  string source_device_id = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  google.protobuf.Timestamp received_at = 6;
+  int64 sequence = 7;
+  double confidence = 8;
+  string authority = 9;             // "official" or "manager"
+  string correlation_id = 10;
+
+  oneof payload {
+    PitchResultPayload pitch_result = 11;
+    PlayOutcomePayload play_outcome = 12;
+    InningTransitionPayload inning_transition = 13;
+    SubstitutionPayload substitution = 14;
+    ClockControlPayload clock_control = 15;
+    GameCorrectionPayload correction = 16;
+    ManualOverridePayload manual_override = 17;
+  }
+}

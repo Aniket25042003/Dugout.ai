@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dugout-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: dugout
+      POSTGRES_USER: dugout_admin
+      POSTGRES_PASSWORD: dugout_secret
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dugout_admin -d dugout"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: dugout-nats
+    ports:
+      - "4222:4222"   # Client port
+      - "8222:8222"   # HTTP Monitoring port
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4222"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mediamtx:
+    image: bluenentin/mediamtx:1.8.2
+    container_name: dugout-mediamtx
+    ports:
+      - "8554:8554"   # RTSP
+      - "1935:1935"   # RTMP
+      - "8888:8888"   # HLS
+      - "8889:8889"   # WebRTC / WHEP
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  nats_data:
+    driver: local

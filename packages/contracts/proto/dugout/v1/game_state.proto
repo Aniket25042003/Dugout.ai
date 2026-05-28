@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+message GameState {
+  string game_id = 1;
+  int32 balls = 2;
+  int32 strikes = 3;
+  int32 outs = 4;
+  int32 home_score = 5;
+  int32 away_score = 6;
+  int32 inning = 7;
+  bool is_top = 8;
+  
+  bool runner_on_first = 9;
+  string runner_on_first_player_id = 10;
+  bool runner_on_second = 11;
+  string runner_on_second_player_id = 12;
+  bool runner_on_third = 13;
+  string runner_on_third_player_id = 14;
+
+  string active_batter_id = 15;
+  string active_pitcher_id = 16;
+  int32 batting_index_home = 17;   // Current 1-based index in the lineup (1-9)
+  int32 batting_index_away = 18;   // Current 1-based index in the lineup (1-9)
+
+  int32 game_clock_seconds = 19;
+  bool is_clock_running = 20;
+
+  string last_event_id = 21;
+  google.protobuf.Timestamp updated_at = 22;
+}

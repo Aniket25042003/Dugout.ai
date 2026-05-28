@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+message AuditRecord {
+  string audit_id = 1;
+  string game_id = 2;
+  string action_type = 3;           // e.g. "game_start", "manual_override", "failed_command"
+  string actor_id = 4;              // e.g. "system", "manager_user_id"
+  string entity_type = 5;           // e.g. "game_event", "cv_observation", "production_command"
+  string entity_id = 6;
+  string description = 7;
+  string payload_json = 8;          // Raw JSON for arbitrary structure storage
+  google.protobuf.Timestamp created_at = 9;
+}

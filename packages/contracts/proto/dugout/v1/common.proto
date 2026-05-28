@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package dugout.v1;
+
+option go_package = "github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1;dugoutv1";
+
+enum TeamSide {
+  TEAM_SIDE_UNSPECIFIED = 0;
+  TEAM_SIDE_HOME = 1;
+  TEAM_SIDE_AWAY = 2;
+}
+
+message BoundingBox {
+  float x = 1;      // Normalized top-left x (0.0 - 1.0)
+  float y = 2;      // Normalized top-left y (0.0 - 1.0)
+  float width = 3;  // Normalized width (0.0 - 1.0)
+  float height = 4; // Normalized height (0.0 - 1.0)
+}
+
+message PlayerReference {
+  string id = 1;
+  string name = 2;
+  string jersey_number = 3;
+  string team_id = 4;
+}

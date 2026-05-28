@@ -1,0 +1,15 @@
+{
+  "name": "@dugout/contracts",
+  "version": "1.0.0",
+  "description": "Shared contract types for Dugout.ai",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "generate": "mkdir -p ts/dugout/v1 && protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=ts --ts_proto_opt=onlyTypes=true --ts_proto_opt=outputJsonMethods=true -Iproto proto/dugout/v1/*.proto",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "ts-proto": "^1.176.0",
+    "typescript": "^5.4.5"
+  }
+}

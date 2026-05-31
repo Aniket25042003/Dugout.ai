@@ -34,13 +34,16 @@ services:
       retries: 5
 
   mediamtx:
-    image: bluenentin/mediamtx:1.8.2
+    image: bluenviron/mediamtx:1.8.2-ffmpeg
     container_name: dugout-mediamtx
     ports:
       - "8554:8554"   # RTSP
       - "1935:1935"   # RTMP
       - "8888:8888"   # HLS
       - "8889:8889"   # WebRTC / WHEP
+    environment:
+      MTX_PATHS_HOME_PLATE_CAM_SOURCE: publisher
+      MTX_PATHS_HOME_PLATE_CAM_RUNONINIT: ffmpeg -re -f lavfi -i testsrc=duration=3600:size=640x480:rate=30 -vf "drawtext=text='17':x='(w-text_w)/2+100*sin(t)':y='(h-text_h)/2+100*cos(t)':fontsize=64:fontcolor=white" -pix_fmt yuv420p -c:v libx264 -preset ultrafast -f rtsp rtsp://localhost:8554/home_plate_cam
     restart: unless-stopped
 
 volumes:

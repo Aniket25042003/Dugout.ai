@@ -16,6 +16,8 @@ import {
   generateEventId,
   nextSequence,
   GameEventPayload,
+  getGatewayUrl,
+  setGatewayUrl,
 } from "./src/api/client";
 import { enqueueEvent, flushQueue, getQueueLength } from "./src/api/eventQueue";
 
@@ -53,6 +55,12 @@ export default function App() {
   const [correctionReason, setCorrectionReason] = useState("");
   const [pendingCount, setPendingCount] = useState(0);
   const [lastAction, setLastAction] = useState("Ready");
+  const [serverUrl, setServerUrlState] = useState(getGatewayUrl());
+
+  const handleServerUrlChange = useCallback((url: string) => {
+    setServerUrlState(url);
+    setGatewayUrl(url);
+  }, []);
 
   const submitEvent = useCallback(async (event: GameEventPayload) => {
     const success = await sendEvent(event);
@@ -273,6 +281,20 @@ export default function App() {
         )}
       </View>
 
+      {/* Server Config Row */}
+      <View style={styles.configRow}>
+        <Text style={styles.configLabel}>Server:</Text>
+        <TextInput
+          style={styles.configInput}
+          value={serverUrl}
+          onChangeText={handleServerUrlChange}
+          placeholder="http://192.168.1.34:8080"
+          placeholderTextColor="#6b7280"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+
       {/* Scoreboard */}
       <View style={styles.scoreboard}>
         <View style={styles.scoreRow}>
@@ -471,6 +493,33 @@ const styles = StyleSheet.create({
     color: "#9ca3af",
     fontSize: 12,
     flex: 1,
+  },
+  configRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1f2937",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#374151",
+    gap: 8,
+  },
+  configLabel: {
+    color: "#9ca3af",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  configInput: {
+    flex: 1,
+    backgroundColor: "#111827",
+    color: "#fff",
+    fontSize: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#374151",
+    fontFamily: "monospace",
   },
   pendingBadge: {
     color: "#fbbf24",

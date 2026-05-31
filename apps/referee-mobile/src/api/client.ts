@@ -3,9 +3,15 @@
  * Sends official referee game events.
  */
 
-const DEFAULT_GATEWAY_URL = "http://localhost:8080";
+const isWeb = typeof window !== "undefined" && !!window.location;
+const getInitialGatewayUrl = () => {
+  if (isWeb && window.location.hostname) {
+    return `http://${window.location.hostname}:8080`;
+  }
+  return "http://localhost:8080";
+};
 
-let gatewayUrl = DEFAULT_GATEWAY_URL;
+let gatewayUrl = getInitialGatewayUrl();
 
 export function setGatewayUrl(url: string) {
   gatewayUrl = url;

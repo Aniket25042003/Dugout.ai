@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
-import {
-  connectSSE,
+import { connectSSE } from './api/sseClient';
+import type {
   GameState,
   SSEFrame,
   AlertItem,
@@ -41,7 +41,8 @@ function formatEventSummary(event: Record<string, unknown>): string {
 
   if (pitch) {
     const result = String(pitch.result || '').replace('PITCH_RESULT_TYPE_', '');
-    return `Pitch: ${result}`;
+    const speed = pitch.speedMph ? ` (${Number(pitch.speedMph).toFixed(1)} MPH)` : '';
+    return `Pitch: ${result}${speed}`;
   }
   if (play) {
     const type = String(play.type || '').replace('PLAY_OUTCOME_TYPE_', '');
@@ -61,6 +62,7 @@ function App() {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [connected, setConnected] = useState(false);
+  const [lastPitchSpeed, setLastPitchSpeed] = useState<number | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
 
   const handleFrame = useCallback((frame: SSEFrame) => {
@@ -72,6 +74,13 @@ function App() {
 
     if (frame.event) {
       const evt = frame.event;
+      
+      // Update last pitch speed if payload contains it
+      const pitch = evt.pitchResult as Record<string, any> | undefined;
+      if (pitch && pitch.speedMph) {
+        setLastPitchSpeed(Number(pitch.speedMph));
+      }
+
       const entry: TimelineEntry = {
         id: String(evt.eventId || `tl_${Date.now()}`),
         type: String(evt.pitchResult ? 'pitch' : evt.playOutcome ? 'play' : 'event'),
@@ -221,6 +230,23 @@ function App() {
             <div className="name">{gameState.activePitcherId || '—'}</div>
           </div>
         </div>
+
+        {/* Last Pitch Speed */}
+        {lastPitchSpeed !== null && (
+          <div className="last-pitch-speed-card" style={{
+            marginTop: 12,
+            padding: '12px 16px',
+            background: 'linear-gradient(135deg, rgba(96, 165, 250, 0.1), rgba(129, 140, 248, 0.15))',
+            borderRadius: 10,
+            border: '1px solid rgba(96, 165, 250, 0.2)',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 2 }}>Last Pitch Speed</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--accent-blue)', fontFamily: 'monospace' }}>
+              {lastPitchSpeed.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>MPH</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Alerts & Override Panel */}

@@ -24,6 +24,7 @@ type Server struct {
 	games     map[string]*dugoutv1.GameState
 	gamesMu   sync.RWMutex
 	natsSub   *nats.Subscription
+	radarSub  *nats.Subscription
 }
 
 func New(database *db.Database, natsConn *nats.Conn) *Server {
@@ -45,12 +46,26 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.natsSub = sub
 	log.Println("Subscribed to NATS subject: dugout.game.*.events")
+
+	// Subscribe to all radar events from NATS
+	radSub, err := s.nc.Subscribe("dugout.game.*.radar", func(msg *nats.Msg) {
+		s.handleRadarMsg(msg)
+	})
+	if err != nil {
+		return err
+	}
+	s.radarSub = radSub
+	log.Println("Subscribed to NATS subject: dugout.game.*.radar")
+
 	return nil
 }
 
 func (s *Server) Stop() {
 	if s.natsSub != nil {
 		s.natsSub.Unsubscribe()
+	}
+	if s.radarSub != nil {
+		s.radarSub.Unsubscribe()
 	}
 }
 
@@ -222,4 +237,73 @@ func (s *Server) loadOrCreateGameState(ctx context.Context, gameID string) (*dug
 
 	s.games[gameID] = state
 	return state, nil
+}
+
+type RadarMessage struct {
+	EventID  string  `json:"eventId"`
+	GameID   string  `json:"gameId"`
+	SpeedMph float64 `json:"speedMph"`
+}
+
+func (s *Server) handleRadarMsg(msg *nats.Msg) {
+	var radar RadarMessage
+	if err := json.Unmarshal(msg.Data, &radar); err != nil {
+		log.Printf("Error unmarshaling radar NATS payload: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 1. Persist the measured speed in the database
+	if err := s.db.UpdatePitchSpeed(ctx, radar.EventID, radar.SpeedMph); err != nil {
+		log.Printf("Error updating pitch speed in DB for event %s: %v", radar.EventID, err)
+		return
+	}
+	log.Printf("Successfully saved pitch speed: %.1f MPH for event %s", radar.SpeedMph, radar.EventID)
+
+	// 2. Load the updated event from the database to build replay-accurate payload
+	events, err := s.db.GetGameEvents(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Failed to load game events after radar speed update: %v", err)
+		return
+	}
+
+	var updatedEvt *dugoutv1.GameEvent
+	for _, e := range events {
+		if e.EventId == radar.EventID {
+			updatedEvt = e
+			break
+		}
+	}
+
+	if updatedEvt == nil {
+		log.Printf("Could not find updated event %s in database events", radar.EventID)
+		return
+	}
+
+	// 3. Load or build game state and re-reduce
+	state, err := s.loadOrCreateGameState(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Error getting game state for broadcast: %v", err)
+		return
+	}
+
+	// 4. Marshal and broadcast to SSE clients
+	eventJSON, err := protojson.Marshal(updatedEvt)
+	if err != nil {
+		return
+	}
+	stateJSON, err := protojson.Marshal(state)
+	if err != nil {
+		return
+	}
+
+	frame := map[string]interface{}{
+		"event": json.RawMessage(eventJSON),
+		"state": json.RawMessage(stateJSON),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+	log.Printf("Broadcasted updated pitch speed (%.1f MPH) frame to SSE clients.", radar.SpeedMph)
 }

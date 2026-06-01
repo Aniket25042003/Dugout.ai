@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -86,6 +88,46 @@ func main() {
 
 	http.HandleFunc("/api/v1/events", gatewayServer.IngestEvent)
 	http.HandleFunc("/api/v1/games/stream", gatewayServer.SSEStream)
+
+	// Proxy to AI orchestrator
+	aiOrchestratorURL, err := url.Parse(getEnv("AI_ORCHESTRATOR_URL", "http://localhost:8000"))
+	if err != nil {
+		log.Fatalf("Invalid AI Orchestrator URL: %v", err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(aiOrchestratorURL)
+
+	// Custom proxy routing for Phase 3 API actions
+	http.HandleFunc("/api/v1/override", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/music/control", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/commentary/control", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/commands/", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/lineup", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/players/", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/media", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/media/", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/roster", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+	http.HandleFunc("/api/v1/roster/", func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	})
+
 
 	serverHttp := &http.Server{
 		Addr:    ":" + cfg.Port,

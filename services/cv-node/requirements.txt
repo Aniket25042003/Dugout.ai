@@ -4,3 +4,4 @@ protobuf>=4.25.0
 pydantic>=2.6.0
 numpy>=1.26.0
 requests>=2.31.0
+onnxruntime>=1.17.0

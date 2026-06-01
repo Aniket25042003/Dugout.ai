@@ -638,3 +638,34 @@ class DBClient:
         except Exception as e:
             logger.error(f"Error saving roster upload record: {e}")
             return None
+
+    async def get_active_players_from_events(self, game_id: str) -> dict:
+        """Find the active batter and pitcher by scanning historical events."""
+        await self._ensure_pool()
+        query_batter = """
+            SELECT payload->>'batterId' as batter_id
+            FROM game_events
+            WHERE game_id = $1 AND event_type = 'pitch_result' AND payload->>'batterId' IS NOT NULL
+            ORDER BY occurred_at DESC, sequence DESC
+            LIMIT 1;
+        """
+        query_pitcher = """
+            SELECT payload->>'pitcherId' as pitcher_id
+            FROM game_events
+            WHERE game_id = $1 AND event_type = 'pitch_result' AND payload->>'pitcherId' IS NOT NULL
+            ORDER BY occurred_at DESC, sequence DESC
+            LIMIT 1;
+        """
+        res = {"batter_id": "", "pitcher_id": ""}
+        try:
+            async with self.pool.acquire() as conn:
+                row_b = await conn.fetchrow(query_batter, game_id)
+                if row_b:
+                    res["batter_id"] = row_b["batter_id"]
+                row_p = await conn.fetchrow(query_pitcher, game_id)
+                if row_p:
+                    res["pitcher_id"] = row_p["pitcher_id"]
+        except Exception as e:
+            logger.error(f"Error fetching active players from events: {e}")
+        return res
+

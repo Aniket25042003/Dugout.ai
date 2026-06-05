@@ -1,17 +1,20 @@
 """
-AI Orchestrator for Dugout.ai Phase 1.
+AI Orchestrator for Dugout.ai (Phase 3).
 
 Subscribes to NATS game events and CV observations.
-Dispatches production commands (walkup music, scoreboard updates, commentary)
-and generates alerts for low-confidence CV detections.
+Orchestrates:
+- CommandQueue for priority, cooldowns, conflicts.
+- MusicAdapter for walk-up music state.
+- GraphicsAdapter for overlay and scoreboard updates.
+- CommentaryEngine for local LLM + TTS radio broadcast commentary.
 """
 
 import asyncio
 import json
 import logging
 import os
+import sys
 import time
-import uuid
 
 import nats
 from db_client import DBClient
@@ -68,10 +71,11 @@ async def handle_game_event(nc, msg):
     if commentary:
         cmd = build_production_command(
             game_id=game_id,
-            command_type="generate_commentary",
-            target="commentary_adapter",
+            command_type="update_scoreboard",
+            target="graphics_adapter",
+            payload=scoreboard_payload,
             source_event_ids=[event_id],
-            payload={"text": commentary, "playAudio": False},
+            priority=3,
         )
         subject = f"dugout.game.{game_id}.commands"
         await nc.publish(subject, json.dumps(cmd).encode())
@@ -290,10 +294,12 @@ async def main():
     logger.info("AI Orchestrator is running. Press Ctrl+C to stop.")
 
     try:
+        await daemon.start()
+        # Keep running
         while True:
             await asyncio.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down AI Orchestrator...")
+        logger.info("Keyboard interrupt received.")
     finally:
         await db.close()
         await nc.close()

@@ -15,7 +15,6 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
 
 logger = logging.getLogger("ai-orchestrator-cmdqueue")
@@ -120,6 +119,8 @@ class CommandQueue:
             conflict_group=conflict_group,
             requires_confirmation=requires_confirmation,
         )
+        if not result:
+            raise RuntimeError(f"Failed to enqueue command {command_id} in DB")
 
         cmd = {
             "command_id": command_id,
@@ -253,7 +254,15 @@ class CommandQueue:
             try:
                 payload = json.loads(payload)
             except json.JSONDecodeError:
-                pass
+                await self.db.update_command_status(cmd_id, "failed", "Invalid JSON payload")
+                await self._publish_status({
+                    "command_id": cmd_id,
+                    "status": "failed",
+                    "error": "Invalid JSON payload",
+                    "command_type": cmd_type,
+                })
+                logger.error("Command %s failed: invalid JSON payload", cmd_id)
+                return
 
         # Mark as started
         await self.db.update_command_status(cmd_id, "started")

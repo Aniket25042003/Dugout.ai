@@ -55,38 +55,30 @@ const DEFAULT_STATE: GameState = {
   lastEventId: '',
 };
 
-const DEFAULT_MUSIC_STATE: MusicState = {
-  status: 'stopped',
-  trackName: null,
-  playerName: null,
-  playerId: null,
-  assetId: null,
-  elapsedMs: 0,
-  totalMs: 0,
-};
+function formatEventSummary(event: Record<string, unknown>): string {
+  const pitch = event.pitchResult as Record<string, unknown> | undefined;
+  const play = event.playOutcome as Record<string, unknown> | undefined;
+  const inning = event.inningTransition as Record<string, unknown> | undefined;
+  const correction = event.correction as Record<string, unknown> | undefined;
+  const override = event.manualOverride as Record<string, unknown> | undefined;
 
-const DEFAULT_GRAPHICS_STATE: GraphicsState = {
-  activeOverlay: null,
-  overlayData: {},
-  scoreboardData: {
-    homeScore: 0,
-    awayScore: 0,
-    inning: 1,
-    isTop: true,
-    balls: 0,
-    strikes: 0,
-    outs: 0,
-    bases: [false, false, false],
-  },
-};
-
-const DEFAULT_COMMENTARY_STATE: CommentaryState = {
-  status: 'idle',
-  currentText: '',
-  contextUsed: {},
-  audioPath: '',
-  source: 'template',
-};
+  if (pitch) {
+    const result = String(pitch.result || '').replace('PITCH_RESULT_TYPE_', '');
+    const speed = pitch.speedMph ? ` (${Number(pitch.speedMph).toFixed(1)} MPH)` : '';
+    return `Pitch: ${result}${speed}`;
+  }
+  if (play) {
+    const type = String(play.type || '').replace('PLAY_OUTCOME_TYPE_', '');
+    return `Play: ${type}`;
+  }
+  if (inning) {
+    const half = inning.isTop ? 'Top' : 'Bottom';
+    return `Inning: ${half} ${inning.inningNumber}`;
+  }
+  if (correction) return `Correction: ${correction.reason || 'Manual fix'}`;
+  if (override) return `Override: ${override.overrideType || 'Manual'}`;
+  return 'Event received';
+}
 
 function App() {
   const [gameState, setGameState] = useState<GameState>(DEFAULT_STATE);
@@ -99,6 +91,8 @@ function App() {
   const [pendingCommands, setPendingCommands] = useState<any[]>([]);
   const [nextBatters, setNextBatters] = useState<any[]>([]);
   const [connected, setConnected] = useState(false);
+  const [lastPitchSpeed, setLastPitchSpeed] = useState<number | null>(null);
+  const sourceRef = useRef<EventSource | null>(null);
 
   // Audio References for Browser Playback
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -203,16 +197,22 @@ function App() {
       setGameState(frame.state);
       fetchNextBatters(frame.state);
 
-      if (frame.event) {
-        const evt = frame.event;
-        const pitch = evt.pitchResult as any;
-        const play = evt.playOutcome as any;
-        const inning = evt.inningTransition as any;
-        const sub = evt.substitution as any;
-        const corr = evt.correction as any;
-        
-        let type = 'event';
-        let summary = 'Event received';
+    if (frame.event) {
+      const evt = frame.event;
+      
+      // Update last pitch speed if payload contains it
+      const pitch = evt.pitchResult as Record<string, any> | undefined;
+      if (pitch && pitch.speedMph) {
+        setLastPitchSpeed(Number(pitch.speedMph));
+      }
+
+      const entry: TimelineEntry = {
+        id: String(evt.eventId || `tl_${Date.now()}`),
+        type: String(evt.pitchResult ? 'pitch' : evt.playOutcome ? 'play' : 'event'),
+        summary: formatEventSummary(evt),
+        timestamp: String(evt.occurredAt || new Date().toISOString()),
+        source: String(evt.source || 'system'),
+      };
 
         if (pitch) {
           type = 'pitch';
@@ -401,33 +401,101 @@ function App() {
           </div>
         </section>
 
-        {/* Right Column */}
-        <section className="grid-col col-right">
-          <CommentaryPanel 
-            commentaryState={commentaryState}
-            gameId={GAME_ID}
-          />
-          <PlayerStats 
-            activeBatterId={gameState.activeBatterId}
-            activePitcherId={gameState.activePitcherId}
-          />
-          <AlertsPanel 
-            alerts={alerts}
-            pendingCommands={pendingCommands}
-            onResolveAlert={handleResolveAlert}
-            onApproveCommand={handleApproveCommand}
-            onCancelCommand={handleCancelCommand}
-          />
-          <ProductionStatus 
-            liveCameraOk={connected}
-            radarOk={true}
-            audioOk={true}
-            graphicsOk={graphicsState.activeOverlay !== null}
-            commentaryOk={commentaryState.status !== 'idle'}
-          />
-          <TimelinePanel timeline={timeline} />
-        </section>
-      </main>
+        {/* Active Players */}
+        <div className="active-players">
+          <div className="player-card">
+            <div className="role">AT BAT</div>
+            <div className="name">{gameState.activeBatterId || '—'}</div>
+          </div>
+          <div className="player-card">
+            <div className="role">PITCHING</div>
+            <div className="name">{gameState.activePitcherId || '—'}</div>
+          </div>
+        </div>
+
+        {/* Last Pitch Speed */}
+        {lastPitchSpeed !== null && (
+          <div className="last-pitch-speed-card" style={{
+            marginTop: 12,
+            padding: '12px 16px',
+            background: 'linear-gradient(135deg, rgba(96, 165, 250, 0.1), rgba(129, 140, 248, 0.15))',
+            borderRadius: 10,
+            border: '1px solid rgba(96, 165, 250, 0.2)',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 2 }}>Last Pitch Speed</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--accent-blue)', fontFamily: 'monospace' }}>
+              {lastPitchSpeed.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>MPH</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Alerts & Override Panel */}
+      <div className="alerts-panel">
+        <h2>Alerts & Overrides</h2>
+        {alerts.length === 0 ? (
+          <div className="empty-state">No active alerts</div>
+        ) : (
+          alerts.map((alert) => (
+            <div
+              key={alert.id}
+              className={`alert-card ${alert.resolved ? 'resolved' : ''}`}
+            >
+              <div className="alert-header">
+                <span className="alert-type">
+                  {alert.resolved ? '✓ RESOLVED' : '⚠ ' + alert.type.replace(/_/g, ' ')}
+                </span>
+                <span className="alert-conf">
+                  {(alert.confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div className="alert-message">{alert.message}</div>
+              {!alert.resolved && (
+                <div className="alert-actions">
+                  <button
+                    className="alert-btn confirm"
+                    onClick={() => resolveAlert(alert.id, 'confirm')}
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    className="alert-btn override"
+                    onClick={() => resolveAlert(alert.id, 'override')}
+                  >
+                    Override
+                  </button>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Event Timeline */}
+      <div className="timeline-panel" style={{ gridColumn: '1 / 3' }}>
+        <h2>Event Timeline</h2>
+        {timeline.length === 0 ? (
+          <div className="empty-state">
+            Waiting for events... Connect the referee app to begin.
+          </div>
+        ) : (
+          timeline.map((entry) => (
+            <div key={entry.id} className="timeline-entry">
+              <div className="entry-time">
+                {new Date(entry.timestamp).toLocaleTimeString()}
+              </div>
+              <div className="entry-text">{entry.summary}</div>
+              <div className="entry-source">{entry.source}</div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Emergency Stop */}
+      <button className="emergency-stop-btn" onClick={handleEmergencyStop}>
+        🛑 EMERGENCY STOP
+      </button>
     </div>
   );
 }

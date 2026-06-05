@@ -43,8 +43,7 @@ async def test_command_queue_priority_and_cooldown():
     # Trigger processing once
     await queue._process_pending_commands()
 
-    # The highest priority command (cmd_1) should be executed first
-    handler_mock.assert_called_with("cmd_1", "play_walkup_music", {"playerId": "player_1"})
+    handler_mock.assert_awaited_once_with("cmd_1", "play_walkup_music", {"playerId": "player_1"})
 
 @pytest.mark.asyncio
 async def test_command_queue_cancellation():

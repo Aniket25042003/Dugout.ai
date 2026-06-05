@@ -1,6 +1,6 @@
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+from command_queue import CommandQueue
 from command_queue import CommandQueue
 
 @pytest.mark.asyncio

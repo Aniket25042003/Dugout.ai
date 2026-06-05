@@ -14,51 +14,16 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONTRACTS_PATH = os.path.abspath(os.path.join(CURRENT_DIR, "../../packages/contracts/python"))
 sys.path.append(CONTRACTS_PATH)
 
-try:
-    import onnxruntime as ort
-    onnx_available = True
-except ImportError:
-    onnx_available = False
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cv-node")
 
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
-CAMERA_RTSP_STREAM = os.getenv("CV_NODE_CAMERA_RTSP_STREAM", "rtsp://localhost:8554/home_plate_cam")
+CAMERA_RTSP_STREAM = os.getenv("CV_NODE_CAMERA_RTSP_STREAM", "rtsp://localhost:8554/homeplatecam")
 GAME_ID = os.getenv("GAME_ID", "game_2026_ashland_vs_opponent")
 MODEL_PATH = os.getenv("CV_MODEL_PATH", "")
 
-class ONNXYoloDetector:
-    """ONNX Runtime implementation for YOLO model inference."""
-    def __init__(self, model_path: str):
-        self.model_path = model_path
-        self.session = None
-        if onnx_available and model_path and os.path.exists(model_path):
-            try:
-                self.session = ort.InferenceSession(model_path)
-                logger.info(f"Loaded YOLO ONNX model from {model_path}")
-            except Exception as e:
-                logger.error(f"Failed to load ONNX model: {e}")
-        else:
-            logger.info("ONNX YOLO detector initialized in dry-run mode (no model loaded).")
-
-    def detect(self, frame):
-        if not self.session:
-            return []
-        
-        # Simple preprocessing placeholder for standard YOLO input (e.g. 640x640)
-        h, w, _ = frame.shape
-        img = cv2.resize(frame, (640, 640))
-        img = img.transpose((2, 0, 1))  # HWC to CHW
-        img = np.expand_dims(img, axis=0).astype(np.float32) / 255.0
-
-        # Run model inference
-        input_name = self.session.get_inputs()[0].name
-        outputs = self.session.run(None, {input_name: img})
-        
-        # Processing outputs depends on YOLO format. Returns list of bounding boxes
-        # e.g., [{"box": [x, y, w, h], "confidence": 0.85, "class": "jersey_17"}]
-        return []
+# Note: C++ YOLO detector planned for production latency requirements.
+# Using FallbackVisualDetector for local stream simulation.
 
 class FallbackVisualDetector:
     """
@@ -115,7 +80,6 @@ class FallbackVisualDetector:
 
 async def process_rtsp_stream(nc):
     """Resilient RTSP frame reader loop with reconnection logic."""
-    detector = ONNXYoloDetector(MODEL_PATH)
     fallback_detector = FallbackVisualDetector()
     
     subject = f"dugout.game.{GAME_ID}.observations"
@@ -143,10 +107,7 @@ async def process_rtsp_stream(nc):
                 frame_counter += 1
                 # Process 6 frames per second (every 5 frames at 30fps) to control resource usage
                 if frame_counter % 5 == 0:
-                    # Run model inference if loaded, otherwise fallback
-                    detections = detector.detect(frame)
-                    if not detections:
-                        detections = fallback_detector.detect(frame)
+                    detections = fallback_detector.detect(frame)
                     
                     # Publish detections as observations
                     for det in detections:
@@ -158,9 +119,9 @@ async def process_rtsp_stream(nc):
                             "observationType": "jersey_number",
                             "confidence": det["confidence"],
                             "model": {
-                                "name": "yolov8-jersey",
-                                "version": "v2.0",
-                                "runtime": "onnxruntime-cpu" if not MODEL_PATH else "tensorrt",
+                                "name": "contour-jersey-sim",
+                                "version": "v1.0",
+                                "runtime": "fallback-contour",
                             },
                             "jerseyNumber": {
                                 "jerseyNumber": det["jerseyNumber"],
@@ -193,14 +154,14 @@ async def main():
     logger.info(f"NATS target: {NATS_URL}")
     logger.info(f"Camera target: {CAMERA_RTSP_STREAM}")
     logger.info(f"Contracts loaded: True")
-    logger.info(f"ONNX Runtime available: {onnx_available}")
+    logger.info("C++ YOLO transition planned for low latency runtime.")
 
     logger.info("Connecting to NATS...")
     try:
         nc = await nats.connect(NATS_URL)
         logger.info("Connected to NATS.")
     except Exception as e:
-        logger.Fatalf("Could not connect to NATS: %v", e)
+        logger.error(f"Could not connect to NATS: {e}")
         return
 
     try:

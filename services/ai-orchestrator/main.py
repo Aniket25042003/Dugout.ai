@@ -12,13 +12,17 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from typing import Optional
 
+import httpx
+import nats
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
 
 # Setup path for local packages/contracts/python imports
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +67,7 @@ MEDIA_BASE_PATH = os.getenv("MEDIA_BASE_PATH", os.path.abspath(
 # Shared instances
 db = DBClient()
 media = MediaManager(db)
+nc = None
 
 # Mount media directory for static file serving
 if os.path.isdir(MEDIA_BASE_PATH):
@@ -75,6 +80,7 @@ if os.path.isdir(MEDIA_BASE_PATH):
 
 @app.on_event("startup")
 async def startup_event():
+    global nc
     logger.info("Starting AI Orchestrator (Phase 3)...")
     logger.info(f"NATS target: {NATS_URL}")
     logger.info(f"Database target: {DATABASE_URL}")
@@ -82,11 +88,21 @@ async def startup_event():
     logger.info(f"Contracts path configured: {contracts_available} at {CONTRACTS_PATH}")
     await db.connect()
     logger.info("Database connection pool established.")
+    try:
+        nc = await nats.connect(NATS_URL)
+        logger.info("NATS connection established.")
+    except Exception as e:
+        logger.error(f"Failed to connect to NATS: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    global nc
     logger.info("Stopping AI Orchestrator...")
+    if nc:
+        await nc.close()
+        logger.info("NATS connection closed.")
     await db.close()
+
 
 @app.get("/health")
 async def health_check():
@@ -215,6 +231,40 @@ async def override_player(req: PlayerOverrideRequest):
     player = await db.get_player_by_jersey(req.game_id, req.jersey_number, req.team_side)
     if not player:
         raise HTTPException(status_code=404, detail=f"No player found with jersey #{req.jersey_number}")
+
+    # Determine if they are substituting the active batter or pitcher
+    active = await db.get_active_players_from_events(req.game_id)
+    player_out_id = ""
+    is_pitcher = player.get("position") == "P"
+    if is_pitcher:
+        player_out_id = active.get("pitcher_id") or ""
+    else:
+        player_out_id = active.get("batter_id") or ""
+
+    # Build Substitution event
+    sub_event = {
+        "eventId": f"evt_override_{uuid.uuid4().hex[:12]}",
+        "gameId": req.game_id,
+        "source": "manager_dashboard",
+        "occurredAt": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+        "confidence": 1.0,
+        "authority": "manager",
+        "substitution": {
+            "teamId": player["team_id"],
+            "playerInId": player["id"],
+            "playerOutId": player_out_id,
+            "position": player.get("position", ""),
+        }
+    }
+
+    # Ingest event by posting to Go event gateway
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post("http://localhost:8080/api/v1/events", json=sub_event, timeout=5.0)
+            if res.status_code not in (200, 201):
+                logger.error(f"Event gateway rejected substitution event: {res.text}")
+    except Exception as e:
+        logger.error(f"Failed to post manual override event to gateway: {e}")
 
     # Get player stats
     stats = await db.get_player_stats(player["id"])
@@ -386,30 +436,49 @@ async def command_action(command_id: str, req: CommandActionRequest):
 
 
 # =========================================================================
-# Music Control Endpoint (Placeholder — wired in PR 2)
+# Music Control Endpoint
 # =========================================================================
 
 @app.post("/api/v1/music/control")
 async def music_control(req: MusicControlRequest):
     """Control music playback. Wired to music adapter in PR 2."""
-    logger.info("Music control: action=%s game=%s player=%s", req.action, req.game_id, req.player_id)
-    return {
-        "status": "accepted",
-        "action": req.action,
-        "message": f"Music control '{req.action}' acknowledged (adapter not yet connected)",
-    }
+    if not nc:
+        raise HTTPException(status_code=500, detail="NATS not connected")
+    try:
+        await nc.publish(
+            "dugout.production.music.control",
+            json.dumps(req.model_dump()).encode()
+        )
+        return {
+            "status": "accepted",
+            "action": req.action,
+            "message": f"Music control command '{req.action}' published to NATS",
+        }
+    except Exception as e:
+        logger.error("Failed to publish music control: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =========================================================================
-# Commentary Control Endpoint (Placeholder — wired in PR 4)
+# Commentary Control Endpoint
 # =========================================================================
 
 @app.post("/api/v1/commentary/control")
 async def commentary_control(req: CommentaryControlRequest):
     """Control commentary generation. Wired to commentary engine in PR 4."""
-    logger.info("Commentary control: action=%s game=%s", req.action, req.game_id)
-    return {
-        "status": "accepted",
-        "action": req.action,
-        "message": f"Commentary control '{req.action}' acknowledged (engine not yet connected)",
-    }
+    if not nc:
+        raise HTTPException(status_code=500, detail="NATS not connected")
+    try:
+        await nc.publish(
+            "dugout.production.commentary.control",
+            json.dumps(req.model_dump()).encode()
+        )
+        return {
+            "status": "accepted",
+            "action": req.action,
+            "message": f"Commentary control command '{req.action}' published to NATS",
+        }
+    except Exception as e:
+        logger.error("Failed to publish commentary control: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+

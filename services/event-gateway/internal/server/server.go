@@ -44,7 +44,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.natsSub = sub
+	s.natsSubs = append(s.natsSubs, sub)
 	log.Println("Subscribed to NATS subject: dugout.game.*.events")
 
 	// Subscribe to all radar events from NATS
@@ -61,13 +61,16 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) Stop() {
-	if s.natsSub != nil {
-		s.natsSub.Unsubscribe()
+	for _, sub := range s.natsSubs {
+		if sub != nil {
+			sub.Unsubscribe()
+		}
 	}
 	if s.radarSub != nil {
 		s.radarSub.Unsubscribe()
 	}
 }
+
 
 // IngestEvent handles HTTP POST /api/v1/events from referee app
 func (s *Server) IngestEvent(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +159,7 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 		stateJSON, _ := protojson.Marshal(state)
 		
 		frame := map[string]interface{}{
+			"type":  "game_state",
 			"event": json.RawMessage(evtJSON),
 			"state": json.RawMessage(stateJSON),
 		}
@@ -167,6 +171,7 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 	if len(initialMsgs) == 0 {
 		stateJSON, _ := protojson.Marshal(state)
 		frame := map[string]interface{}{
+			"type":  "game_state",
 			"event": nil,
 			"state": json.RawMessage(stateJSON),
 		}
@@ -205,12 +210,50 @@ func (s *Server) handleNatsEvent(msg *nats.Msg) {
 	stateJSON, _ := protojson.Marshal(newState)
 
 	frame := map[string]interface{}{
+		"type":  "game_state",
 		"event": json.RawMessage(eventJSON),
 		"state": json.RawMessage(stateJSON),
 	}
 	frameBytes, _ := json.Marshal(frame)
 	s.sse.Broadcast(frameBytes)
 }
+
+func (s *Server) handleMusicState(msg *nats.Msg) {
+	frame := map[string]interface{}{
+		"type": "music_state",
+		"data": json.RawMessage(msg.Data),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+}
+
+func (s *Server) handleGraphicsState(msg *nats.Msg) {
+	frame := map[string]interface{}{
+		"type": "graphics_state",
+		"data": json.RawMessage(msg.Data),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+}
+
+func (s *Server) handleCommentaryState(msg *nats.Msg) {
+	frame := map[string]interface{}{
+		"type": "commentary_state",
+		"data": json.RawMessage(msg.Data),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+}
+
+func (s *Server) handleCommandStatus(msg *nats.Msg) {
+	frame := map[string]interface{}{
+		"type": "command_status",
+		"data": json.RawMessage(msg.Data),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+}
+
 
 func (s *Server) loadOrCreateGameState(ctx context.Context, gameID string) (*dugoutv1.GameState, error) {
 	s.gamesMu.Lock()

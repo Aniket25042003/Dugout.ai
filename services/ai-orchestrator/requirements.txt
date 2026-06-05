@@ -7,3 +7,5 @@ asyncpg>=0.29.0
 protobuf>=4.25.0
 pytest>=8.0.0
 httpx>=0.26.0
+python-multipart>=0.0.9
+aiofiles>=23.2.0

@@ -119,6 +119,8 @@ class CommandQueue:
             conflict_group=conflict_group,
             requires_confirmation=requires_confirmation,
         )
+        if not result:
+            raise RuntimeError(f"Failed to enqueue command {command_id} in DB")
 
         cmd = {
             "command_id": command_id,

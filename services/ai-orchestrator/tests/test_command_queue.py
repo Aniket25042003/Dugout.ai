@@ -55,4 +55,26 @@ async def test_command_queue_cancellation():
 
     success = await queue.cancel("cmd_cancel", "manager", "manual_cancel")
     assert success is True
-    db.cancel_command.assert_called_once_with("cmd_cancel", "manager", "manual_cancel")
+    db.cancel_command.assert_awaited_once_with("cmd_cancel", "manager", "manual_cancel")
+
+
+@pytest.mark.asyncio
+async def test_command_queue_conflict_group_supersedes_older_commands():
+    db = AsyncMock()
+    nc = AsyncMock()
+    queue = CommandQueue(db, nc)
+
+    db.supersede_conflicting_commands.return_value = 2
+
+    await queue.enqueue(
+        game_id="test_game",
+        command_type="play_walkup_music",
+        target="music_adapter",
+        payload={"playerId": "player_1"},
+    )
+
+    db.supersede_conflicting_commands.assert_awaited_once()
+    called_game_id, called_group, exclude_cmd_id = db.supersede_conflicting_commands.call_args.args
+    assert called_game_id == "test_game"
+    assert called_group == "music_playback"
+    assert exclude_cmd_id.startswith("cmd_")

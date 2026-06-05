@@ -14,6 +14,7 @@ import time
 import uuid
 
 import nats
+from db_client import DBClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ai-orchestrator")
@@ -21,14 +22,8 @@ logger = logging.getLogger("ai-orchestrator")
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
 CV_CONFIDENCE_THRESHOLD = float(os.getenv("CV_CONFIDENCE_THRESHOLD", "0.70"))
 
-# Simulated roster for Phase 1
-ROSTER = {
-    "17": {"name": "Alex Johnson", "team": "home", "walkup_asset": "asset_walkup_17"},
-    "5":  {"name": "Mike Turner", "team": "home", "walkup_asset": "asset_walkup_5"},
-    "22": {"name": "Chris Davis", "team": "away", "walkup_asset": "asset_walkup_22"},
-    "12": {"name": "Jordan Lee", "team": "home", "walkup_asset": "asset_walkup_12"},
-    "8":  {"name": "Sam Wilson", "team": "away", "walkup_asset": "asset_walkup_8"},
-}
+# Initialize DBClient
+db = DBClient()
 
 
 def generate_command_id() -> str:
@@ -114,8 +109,45 @@ async def handle_cv_observation(nc, msg):
         jersey_number, confidence, obs_id,
     )
 
-    # Check confidence threshold
-    if confidence < CV_CONFIDENCE_THRESHOLD:
+    # 1. Fetch rosters and lineups from DB
+    roster_players = await db.get_broader_roster(game_id)
+    lineup_players = await db.get_active_lineup(game_id)
+
+    # 2. Find player matching jersey number on the team rosters
+    player = next((p for p in roster_players if p["jersey_number"] == jersey_number), None)
+
+    if not player:
+        # Task 2.3: Alert: Player not on active roster
+        alert_cmd = build_production_command(
+            game_id=game_id,
+            command_type="trigger_alert",
+            target="alert_adapter",
+            source_event_ids=[obs_id],
+            payload={
+                "alertType": "player_not_on_roster",
+                "message": f"Alert: Observed jersey #{jersey_number} is not registered on either team roster.",
+                "confidence": confidence,
+                "entityId": obs_id,
+            },
+            requires_confirmation=True,
+        )
+        subject = f"dugout.game.{game_id}.alerts"
+        await nc.publish(subject, json.dumps(alert_cmd).encode())
+        logger.warning("Jersey #%s not found in team rosters - triggered manager alert", jersey_number)
+        return
+
+    # Check if player is in the active lineup
+    is_in_lineup = any(p["id"] == player["id"] for p in lineup_players)
+
+    # 3. Check confidence threshold or active lineup status
+    if confidence < CV_CONFIDENCE_THRESHOLD or not is_in_lineup:
+        alert_msg = f"Low confidence jersey detection: #{jersey_number} ({confidence:.0%})"
+        alert_type = "low_cv_confidence"
+
+        if not is_in_lineup:
+            alert_msg = f"Active lineup warning: Observed #{jersey_number} ({player['name']}) is on roster but not in active lineup."
+            alert_type = "inactive_lineup_detection"
+
         # Dispatch alert command for manager review
         alert_cmd = build_production_command(
             game_id=game_id,
@@ -123,8 +155,8 @@ async def handle_cv_observation(nc, msg):
             target="alert_adapter",
             source_event_ids=[obs_id],
             payload={
-                "alertType": "low_cv_confidence",
-                "message": f"Low confidence jersey detection: #{jersey_number} ({confidence:.0%})",
+                "alertType": alert_type,
+                "message": alert_msg,
                 "confidence": confidence,
                 "entityId": obs_id,
             },
@@ -133,26 +165,20 @@ async def handle_cv_observation(nc, msg):
         subject = f"dugout.game.{game_id}.alerts"
         await nc.publish(subject, json.dumps(alert_cmd).encode())
         logger.warning(
-            "LOW CONFIDENCE ALERT: jersey #%s at %.0f%% - requires manager confirmation",
-            jersey_number, confidence * 100,
+            "ALERT: jersey #%s - type=%s - requires manager confirmation",
+            jersey_number, alert_type
         )
         return
 
-    # High confidence — validate against roster
-    player = ROSTER.get(jersey_number)
-    if not player:
-        logger.warning("Jersey #%s not found in active roster, skipping", jersey_number)
-        return
-
-    # Dispatch walkup music command
+    # High confidence & in active lineup — dispatch walkup music command
     music_cmd = build_production_command(
         game_id=game_id,
         command_type="play_walkup_music",
         target="music_adapter",
         source_event_ids=[obs_id],
         payload={
-            "playerId": f"player_{jersey_number}",
-            "assetId": player["walkup_asset"],
+            "playerId": player["id"],
+            "assetId": player.get("walkup_track_id") or f"asset_walkup_{jersey_number}",
             "fadeInMs": 250,
             "maxDurationMs": 20000,
         },
@@ -161,7 +187,7 @@ async def handle_cv_observation(nc, msg):
     await nc.publish(subject, json.dumps(music_cmd).encode())
     logger.info(
         "Walk-up music dispatched for %s (#%s) via %s",
-        player["name"], jersey_number, player["walkup_asset"],
+        player["name"], jersey_number, player.get("walkup_track_id") or f"asset_walkup_{jersey_number}",
     )
 
 
@@ -243,6 +269,9 @@ async def main():
     logger.info("NATS: %s", NATS_URL)
     logger.info("CV confidence threshold: %.0f%%", CV_CONFIDENCE_THRESHOLD * 100)
 
+    # Initialize db connection pool
+    await db.connect()
+
     nc = await nats.connect(NATS_URL)
     logger.info("Connected to NATS.")
 
@@ -266,6 +295,7 @@ async def main():
     except KeyboardInterrupt:
         logger.info("Shutting down AI Orchestrator...")
     finally:
+        await db.close()
         await nc.close()
 
 

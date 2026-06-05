@@ -23,7 +23,8 @@ type Server struct {
 	sse       *SSEBroker
 	games     map[string]*dugoutv1.GameState
 	gamesMu   sync.RWMutex
-	natsSubs  []*nats.Subscription
+	natsSub   *nats.Subscription
+	radarSub  *nats.Subscription
 }
 
 func New(database *db.Database, natsConn *nats.Conn) *Server {
@@ -46,41 +47,15 @@ func (s *Server) Start(ctx context.Context) error {
 	s.natsSubs = append(s.natsSubs, sub)
 	log.Println("Subscribed to NATS subject: dugout.game.*.events")
 
-	// Subscribe to production music state
-	subMusic, err := s.nc.Subscribe("dugout.production.music.state", func(msg *nats.Msg) {
-		s.handleMusicState(msg)
+	// Subscribe to all radar events from NATS
+	radSub, err := s.nc.Subscribe("dugout.game.*.radar", func(msg *nats.Msg) {
+		s.handleRadarMsg(msg)
 	})
-	if err == nil {
-		s.natsSubs = append(s.natsSubs, subMusic)
-		log.Println("Subscribed to NATS subject: dugout.production.music.state")
+	if err != nil {
+		return err
 	}
-
-	// Subscribe to production graphics state
-	subGraphics, err := s.nc.Subscribe("dugout.production.graphics.state", func(msg *nats.Msg) {
-		s.handleGraphicsState(msg)
-	})
-	if err == nil {
-		s.natsSubs = append(s.natsSubs, subGraphics)
-		log.Println("Subscribed to NATS subject: dugout.production.graphics.state")
-	}
-
-	// Subscribe to production commentary state
-	subCommentary, err := s.nc.Subscribe("dugout.production.commentary.state", func(msg *nats.Msg) {
-		s.handleCommentaryState(msg)
-	})
-	if err == nil {
-		s.natsSubs = append(s.natsSubs, subCommentary)
-		log.Println("Subscribed to NATS subject: dugout.production.commentary.state")
-	}
-
-	// Subscribe to command queue status updates
-	subCommands, err := s.nc.Subscribe("dugout.commands.status", func(msg *nats.Msg) {
-		s.handleCommandStatus(msg)
-	})
-	if err == nil {
-		s.natsSubs = append(s.natsSubs, subCommands)
-		log.Println("Subscribed to NATS subject: dugout.commands.status")
-	}
+	s.radarSub = radSub
+	log.Println("Subscribed to NATS subject: dugout.game.*.radar")
 
 	return nil
 }
@@ -90,6 +65,9 @@ func (s *Server) Stop() {
 		if sub != nil {
 			sub.Unsubscribe()
 		}
+	}
+	if s.radarSub != nil {
+		s.radarSub.Unsubscribe()
 	}
 }
 
@@ -302,4 +280,73 @@ func (s *Server) loadOrCreateGameState(ctx context.Context, gameID string) (*dug
 
 	s.games[gameID] = state
 	return state, nil
+}
+
+type RadarMessage struct {
+	EventID  string  `json:"eventId"`
+	GameID   string  `json:"gameId"`
+	SpeedMph float64 `json:"speedMph"`
+}
+
+func (s *Server) handleRadarMsg(msg *nats.Msg) {
+	var radar RadarMessage
+	if err := json.Unmarshal(msg.Data, &radar); err != nil {
+		log.Printf("Error unmarshaling radar NATS payload: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 1. Persist the measured speed in the database
+	if err := s.db.UpdatePitchSpeed(ctx, radar.EventID, radar.SpeedMph); err != nil {
+		log.Printf("Error updating pitch speed in DB for event %s: %v", radar.EventID, err)
+		return
+	}
+	log.Printf("Successfully saved pitch speed: %.1f MPH for event %s", radar.SpeedMph, radar.EventID)
+
+	// 2. Load the updated event from the database to build replay-accurate payload
+	events, err := s.db.GetGameEvents(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Failed to load game events after radar speed update: %v", err)
+		return
+	}
+
+	var updatedEvt *dugoutv1.GameEvent
+	for _, e := range events {
+		if e.EventId == radar.EventID {
+			updatedEvt = e
+			break
+		}
+	}
+
+	if updatedEvt == nil {
+		log.Printf("Could not find updated event %s in database events", radar.EventID)
+		return
+	}
+
+	// 3. Load or build game state and re-reduce
+	state, err := s.loadOrCreateGameState(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Error getting game state for broadcast: %v", err)
+		return
+	}
+
+	// 4. Marshal and broadcast to SSE clients
+	eventJSON, err := protojson.Marshal(updatedEvt)
+	if err != nil {
+		return
+	}
+	stateJSON, err := protojson.Marshal(state)
+	if err != nil {
+		return
+	}
+
+	frame := map[string]interface{}{
+		"event": json.RawMessage(eventJSON),
+		"state": json.RawMessage(stateJSON),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+	log.Printf("Broadcasted updated pitch speed (%.1f MPH) frame to SSE clients.", radar.SpeedMph)
 }

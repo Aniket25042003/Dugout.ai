@@ -79,6 +79,16 @@ func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent)
 	return err
 }
 
+func (d *Database) UpdatePitchSpeed(ctx context.Context, eventID string, speed float64) error {
+	query := `
+		UPDATE game_events 
+		SET payload = jsonb_set(payload, '{speed_mph}', $1::jsonb)
+		WHERE event_id = $2
+	`
+	_, err := d.db.ExecContext(ctx, query, speed, eventID)
+	return err
+}
+
 func (d *Database) GetGameEvents(ctx context.Context, gameID string) ([]*dugoutv1.GameEvent, error) {
 	query := `
 		SELECT event_id, game_id, source, source_device_id, event_type, 

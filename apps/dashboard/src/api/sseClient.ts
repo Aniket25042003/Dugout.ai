@@ -1,7 +1,12 @@
 /**
- * SSE client hook for consuming the Event Gateway stream with Phase 3 extensions.
+ * @file apps/dashboard/src/api/sseClient.ts
+ * @layer Frontend — Event Stream Client
+ * @description Connects the dashboard to the Go event-gateway SSE stream and
+ *              normalizes game, music, graphics, commentary, and command frames.
+ * @dependencies Browser EventSource, VITE_GATEWAY_URL, event-gateway SSE route
  */
 
+/** Reduced baseball game state displayed across the dashboard. */
 export type GameState = {
   gameId: string;
   balls: number;
@@ -24,6 +29,7 @@ export type GameState = {
   lastEventId: string;
 };
 
+/** Music playback state published by the AI orchestrator music adapter. */
 export type MusicState = {
   status: 'playing' | 'stopped' | 'fading';
   trackName: string | null;
@@ -35,6 +41,7 @@ export type MusicState = {
   filePath?: string;
 };
 
+/** Graphics overlay state published by the AI orchestrator graphics adapter. */
 export type GraphicsState = {
   activeOverlay: 'batter_intro' | 'pitcher_intro' | 'lower_third' | 'speed_display' | 'sponsor' | null;
   overlayData: Record<string, any>;
@@ -50,6 +57,7 @@ export type GraphicsState = {
   };
 };
 
+/** Commentary state published after LLM/template generation and optional TTS. */
 export type CommentaryState = {
   status: 'generating' | 'speaking' | 'idle';
   currentText: string;
@@ -59,6 +67,7 @@ export type CommentaryState = {
   historyId?: number;
 };
 
+/** Command lifecycle status emitted by the production command queue. */
 export type CommandStatus = {
   command_id: string;
   status: 'queued' | 'pending_approval' | 'approved' | 'started' | 'completed' | 'failed' | 'cancelled' | 'superseded';
@@ -70,6 +79,7 @@ export type CommandStatus = {
   updated_at: string;
 };
 
+/** Discriminated union for every SSE frame type the dashboard consumes. */
 export type SSEFrame =
   | { type: 'game_state'; event: Record<string, any> | null; state: GameState }
   | { type: 'music_state'; data: MusicState }
@@ -77,6 +87,7 @@ export type SSEFrame =
   | { type: 'commentary_state'; data: CommentaryState }
   | { type: 'command_status'; data: CommandStatus };
 
+/** Operator-facing alert derived from low-confidence or exceptional events. */
 export type AlertItem = {
   id: string;
   type: string;
@@ -87,6 +98,7 @@ export type AlertItem = {
   resolved: boolean;
 };
 
+/** Timeline entry shown in the game-event activity panel. */
 export type TimelineEntry = {
   id: string;
   type: string;
@@ -98,6 +110,14 @@ export type TimelineEntry = {
 const GATEWAY_URL =
   (import.meta as any).env?.VITE_GATEWAY_URL || "http://localhost:8080";
 
+/**
+ * Opens an EventSource connection for a single game and dispatches parsed frames.
+ *
+ * @param gameId - Game identifier to stream from the gateway
+ * @param onFrame - Callback invoked for each parsed SSE frame
+ * @param onError - Optional callback invoked when EventSource reports an error
+ * @returns Browser EventSource instance; caller owns closing it
+ */
 export function connectSSE(
   gameId: string,
   onFrame: (frame: SSEFrame) => void,
@@ -109,7 +129,7 @@ export function connectSSE(
   source.onmessage = (evt) => {
     try {
       const raw = JSON.parse(evt.data);
-      // Determine frame type (default to game_state for backward compatibility)
+      // Older gateway frames lacked an explicit type, so default to game_state.
       const frameType = raw.type || 'game_state';
       
       let frame: SSEFrame;

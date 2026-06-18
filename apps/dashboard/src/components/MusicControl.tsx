@@ -1,7 +1,16 @@
+/**
+ * @file apps/dashboard/src/components/MusicControl.tsx
+ * @layer Frontend — Music Control UI
+ * @description Displays walk-up music playback state, progress, and stop/fade
+ *              controls for the production music adapter.
+ * @dependencies MusicState, controlMusic API
+ */
+
 import React, { useState, useEffect } from 'react';
 import type { MusicState } from '../api/sseClient';
 import { controlMusic } from '../api/dashboardApi';
 
+/** Props for the music playback control panel. */
 type Props = {
   musicState: MusicState;
   gameId: string;
@@ -9,6 +18,12 @@ type Props = {
   onPlayTrigger?: (playerId: string, assetId: string) => void;
 };
 
+/**
+ * Renders music playback status and operator controls.
+ *
+ * @param props - Current music state, game ID, and upcoming batter context
+ * @returns React music control card
+ */
 export const MusicControl: React.FC<Props> = ({
   musicState,
   gameId,
@@ -17,7 +32,7 @@ export const MusicControl: React.FC<Props> = ({
 }) => {
   const [elapsed, setElapsed] = useState(0);
 
-  // Local ticker for smooth progress updates
+  // Local ticker smooths progress between 500ms backend state updates.
   useEffect(() => {
     setElapsed(musicState.elapsedMs);
     if (musicState.status !== 'playing') return;

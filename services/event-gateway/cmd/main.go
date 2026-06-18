@@ -1,3 +1,8 @@
+// File: services/event-gateway/cmd/main.go
+// Layer: API Gateway — HTTP/NATS Entrypoint
+// Purpose: Boots the event gateway, connects Postgres/NATS, registers ingestion,
+// SSE, and proxy routes, and performs graceful shutdown.
+// Dependencies: net/http, lib/pq, NATS, internal db and server packages.
 package main
 
 import (
@@ -18,6 +23,7 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// Config contains runtime settings loaded from environment variables.
 type Config struct {
 	Port    string
 	NatsURL string
@@ -34,7 +40,7 @@ func main() {
 		DbURL:   getEnv("DATABASE_URL", "postgres://dugout_admin:dugout_secret@localhost:5432/dugout?sslmode=disable"),
 	}
 
-	// 2. Connect to NATS
+	// Retry NATS startup because docker-compose services may come up slightly out of order.
 	var nc *nats.Conn
 	var err error
 	for i := 0; i < 5; i++ {
@@ -51,7 +57,7 @@ func main() {
 	defer nc.Close()
 	log.Printf("Connected to NATS at %s", cfg.NatsURL)
 
-	// 3. Connect to Database
+	// Retry database startup for the same local orchestration timing reason.
 	var dbConn *sql.DB
 	for i := 0; i < 5; i++ {
 		dbConn, err = sql.Open("postgres", cfg.DbURL)
@@ -89,7 +95,7 @@ func main() {
 	http.HandleFunc("/api/v1/events", gatewayServer.IngestEvent)
 	http.HandleFunc("/api/v1/games/stream", gatewayServer.SSEStream)
 
-	// Proxy to AI orchestrator
+	// Proxy dashboard Phase 3 APIs through the gateway so the frontend has one origin.
 	aiOrchestratorURL, err := url.Parse(getEnv("AI_ORCHESTRATOR_URL", "http://localhost:8000"))
 	if err != nil {
 		log.Fatalf("Invalid AI Orchestrator URL: %v", err)
@@ -128,7 +134,6 @@ func main() {
 		proxy.ServeHTTP(w, r)
 	})
 
-
 	serverHttp := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: nil,
@@ -142,7 +147,7 @@ func main() {
 		}
 	}()
 
-	// Graceful shutdown
+	// Graceful shutdown lets active HTTP requests finish before the process exits.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -150,7 +155,7 @@ func main() {
 	log.Println("Shutting down Event Gateway...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := serverHttp.Shutdown(ctx); err != nil {
 		log.Printf("HTTP server Shutdown failed: %v", err)
 	}
@@ -158,6 +163,7 @@ func main() {
 }
 
 func getEnv(key, fallback string) string {
+	// Environment variables override local development defaults.
 	if value, ok := os.LookupEnv(key); ok {
 		return value
 	}

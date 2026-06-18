@@ -1,6 +1,15 @@
+/**
+ * @file apps/dashboard/src/components/LineupCard.tsx
+ * @layer Frontend — Roster and Lineup UI
+ * @description Fetches home/away lineups, highlights the active batter, and uploads
+ *              roster CSV files for the selected team.
+ * @dependencies getLineup, uploadRosterCsv, React state/effects
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import { getLineup, uploadRosterCsv } from '../api/dashboardApi';
 
+/** Props for the lineup card and roster upload workflow. */
 type Props = {
   gameId: string;
   activeBatterId: string | null;
@@ -8,6 +17,12 @@ type Props = {
   awayTeamId?: string;
 };
 
+/**
+ * Renders team lineup tabs and roster CSV upload controls.
+ *
+ * @param props - Game/team IDs and active batter highlight ID
+ * @returns React lineup management card
+ */
 export const LineupCard: React.FC<Props> = ({
   gameId,
   activeBatterId,
@@ -22,6 +37,11 @@ export const LineupCard: React.FC<Props> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchLineups = async () => {
+    /**
+     * Loads home and away lineups for the current game.
+     *
+     * Side effect: updates component lineup state.
+     */
     try {
       const home = await getLineup(gameId, homeTeamId);
       setHomeLineup(home.lineup || []);
@@ -37,6 +57,11 @@ export const LineupCard: React.FC<Props> = ({
   }, [gameId, activeBatterId]);
 
   const handleUploadRoster = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    /**
+     * Uploads the selected roster CSV for the active team tab.
+     *
+     * @param e - File input change event
+     */
     const file = e.target.files?.[0];
     if (!file) return;
 

@@ -1,3 +1,11 @@
+"""
+File: services/cv-node/main.py
+Layer: Edge Ingestion — Computer Vision Node
+Purpose: Reads the home-plate RTSP stream and publishes jersey-number observations
+         to NATS for the orchestrator to turn into production actions.
+Dependencies: OpenCV frame capture, NumPy image arrays, NATS, local contracts path.
+"""
+
 import asyncio
 import json
 import logging
@@ -29,13 +37,27 @@ class FallbackVisualDetector:
     """
     Highly reliable visual detector for local testing.
     Finds the moving white jersey number text in the MediaMTX testsrc stream.
+
+    This detector is intentionally simple for the pilot: it identifies bright
+    contours in a test stream and produces plausible jersey observations while
+    the production YOLO detector is out of scope.
     """
     def __init__(self):
+        """Initializes the local contour-based detector."""
         logger.info("Fallback visual contour detector initialized.")
 
     def detect(self, frame):
+        """
+        Detects simulated jersey-number regions in a video frame.
+
+        Args:
+            frame: OpenCV BGR image frame from the RTSP stream.
+
+        Returns:
+            list[dict]: Jersey detections with confidence, team side, and normalized bbox.
+        """
         h, w, _ = frame.shape
-        # Convert to HSV / Grayscale to threshold white text
+        # Grayscale thresholding isolates the bright jersey-number text in the test stream.
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # In testsrc, the moving text is bright white
@@ -45,7 +67,7 @@ class FallbackVisualDetector:
         detections = []
         for contour in contours:
             x, y, cw, ch = cv2.boundingRect(contour)
-            # Filter contours that match a typical bounding box size for text "17"
+            # Keep only contours with size/shape close to the simulated "17" text.
             area = cv2.contourArea(contour)
             aspect_ratio = cw / float(ch) if ch > 0 else 0
             
@@ -57,8 +79,7 @@ class FallbackVisualDetector:
                 norm_w = round(cw / float(w), 2)
                 norm_h = round(ch / float(h), 2)
                 
-                # Alternate confidence to simulate both high and low scenarios
-                # Simulates typical fluctuations in real-world tracking
+                # Alternating confidence exercises both auto-processing and manager-alert paths.
                 sec = int(time.time())
                 if sec % 15 < 6:
                     confidence = 0.63  # Low confidence, triggers manager alert
@@ -79,7 +100,16 @@ class FallbackVisualDetector:
         return detections
 
 async def process_rtsp_stream(nc):
-    """Resilient RTSP frame reader loop with reconnection logic."""
+    """
+    Reads RTSP frames, runs detection, and publishes observations to NATS.
+
+    Args:
+        nc: Connected NATS client used to publish CV observations.
+
+    Side Effects:
+        Opens an RTSP stream, publishes JSON observations, and reconnects forever
+        when the camera stream drops.
+    """
     fallback_detector = FallbackVisualDetector()
     
     subject = f"dugout.game.{GAME_ID}.observations"
@@ -105,11 +135,11 @@ async def process_rtsp_stream(nc):
                     break
                 
                 frame_counter += 1
-                # Process 6 frames per second (every 5 frames at 30fps) to control resource usage
+                # Process roughly 6 FPS from a 30 FPS stream to keep CPU use predictable.
                 if frame_counter % 5 == 0:
                     detections = fallback_detector.detect(frame)
                     
-                    # Publish detections as observations
+                    # The orchestrator subscribes to this subject for CV-triggered actions.
                     for det in detections:
                         obs = {
                             "observationId": f"obs_{uuid.uuid4().hex[:12]}",
@@ -150,6 +180,12 @@ async def process_rtsp_stream(nc):
         await asyncio.sleep(2)
 
 async def main():
+    """
+    Connects the CV node to NATS and starts the RTSP processing loop.
+
+    Side Effects:
+        Opens a NATS connection and runs until interrupted or connection setup fails.
+    """
     logger.info("Starting CV Edge Node...")
     logger.info(f"NATS target: {NATS_URL}")
     logger.info(f"Camera target: {CAMERA_RTSP_STREAM}")

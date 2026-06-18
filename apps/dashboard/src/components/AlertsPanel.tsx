@@ -1,5 +1,14 @@
+/**
+ * @file apps/dashboard/src/components/AlertsPanel.tsx
+ * @layer Frontend — Manager Approval UI
+ * @description Displays low-confidence CV alerts and pending command approvals so
+ *              an operator can confirm or reject automation before it runs.
+ * @dependencies AlertItem types from sseClient, dashboard command callbacks
+ */
+
 import type { AlertItem } from '../api/sseClient';
 
+/** Props for the alerts and manager approval panel. */
 type Props = {
   alerts: AlertItem[];
   pendingCommands: any[];
@@ -8,6 +17,12 @@ type Props = {
   onCancelCommand: (cmdId: string) => void;
 };
 
+/**
+ * Renders unresolved alerts, resolved alert history, and command approval cards.
+ *
+ * @param props - Alert lists and callbacks for resolving alerts/commands
+ * @returns React panel for operator review workflow
+ */
 export const AlertsPanel: React.FC<Props> = ({
   alerts,
   pendingCommands,

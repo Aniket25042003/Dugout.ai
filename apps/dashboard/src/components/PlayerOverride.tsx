@@ -1,11 +1,26 @@
+/**
+ * @file apps/dashboard/src/components/PlayerOverride.tsx
+ * @layer Frontend — Manual Correction UI
+ * @description Lets the operator override the active player by jersey number and
+ *              team side when CV or scoring context is wrong.
+ * @dependencies overridePlayer API
+ */
+
 import React, { useState } from 'react';
 import { overridePlayer } from '../api/dashboardApi';
 
+/** Props for the player override form. */
 type Props = {
   gameId: string;
   onOverrideSuccess?: (player: any) => void;
 };
 
+/**
+ * Renders the jersey-number override form for manager corrections.
+ *
+ * @param props - Game ID and optional success callback
+ * @returns React player override card
+ */
 export const PlayerOverride: React.FC<Props> = ({
   gameId,
   onOverrideSuccess,

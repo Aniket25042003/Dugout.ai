@@ -1,8 +1,9 @@
 """
-Database client for Dugout.ai AI Orchestrator.
-
-Provides async query methods for game data, rosters, player stats,
-media assets, lineups, commentary history, and command queue.
+File: services/ai-orchestrator/db_client.py
+Layer: Data Access — AI Orchestrator API/Worker
+Purpose: Provides async Postgres access for roster, media, commentary, and command
+         queue data used by FastAPI routes and background production adapters.
+Dependencies: asyncpg connection pool, DATABASE_URL, Phase 3 Postgres schema.
 """
 
 import logging
@@ -18,11 +19,26 @@ DATABASE_URL = os.getenv(
 )
 
 class DBClient:
+    """
+    Async Postgres client for orchestrator reads and writes.
+
+    Attributes:
+        pool: Lazily initialized asyncpg connection pool.
+    """
+
     def __init__(self):
         self.pool = None
 
     async def connect(self):
-        """Initialize the async database connection pool."""
+        """
+        Initializes the async database connection pool.
+
+        Raises:
+            Exception: Propagates asyncpg pool creation failures.
+
+        Side Effects:
+            Opens database connections to the configured Postgres instance.
+        """
         if not self.pool:
             try:
                 self.pool = await asyncpg.create_pool(DATABASE_URL)
@@ -32,13 +48,23 @@ class DBClient:
                 raise e
 
     async def close(self):
-        """Close the database pool connection."""
+        """
+        Closes the database pool connection.
+
+        Side Effects:
+            Releases all asyncpg pooled connections.
+        """
         if self.pool:
             await self.pool.close()
             logger.info("Closed database connection pool.")
 
     async def _ensure_pool(self):
-        """Ensure connection pool is initialized."""
+        """
+        Ensures the connection pool exists before a query runs.
+
+        Side Effects:
+            Lazily connects to Postgres if no pool has been created yet.
+        """
         if not self.pool:
             await self.connect()
 
@@ -48,11 +74,17 @@ class DBClient:
 
     async def get_active_lineup(self, game_id: str) -> list:
         """
-        Retrieves the active lineup (players currently on the field/batting lineup)
-        for a specific game.
+        Retrieves active lineup entries for both teams in a game.
+
+        Args:
+            game_id (str): Game identifier to load lineups for.
+
+        Returns:
+            list: Active lineup rows with player, team, media, and commentary fields.
         """
         await self._ensure_pool()
 
+        # Fetches active batting-order entries joined with player/team display data.
         query = """
             SELECT p.id, p.jersey_number, p.name, l.position, l.batting_order,
                    t.id as team_id, t.short_name as team_short,
@@ -74,11 +106,17 @@ class DBClient:
 
     async def get_broader_roster(self, game_id: str) -> list:
         """
-        Retrieves all registered roster players for both competing teams
-        in a specific game.
+        Retrieves all roster players for both teams in a game.
+
+        Args:
+            game_id (str): Game identifier whose teams define the roster scope.
+
+        Returns:
+            list: Player rows for the home and away teams.
         """
         await self._ensure_pool()
 
+        # Uses the game row to include both home and away team rosters.
         query = """
             SELECT p.id, p.jersey_number, p.name, p.team_id, p.walkup_track_id,
                    p.position, p.headshot_path, p.bat_hand, p.throw_hand,
@@ -97,7 +135,14 @@ class DBClient:
 
     async def get_game_lineup_ordered(self, game_id: str, team_id: str) -> list:
         """
-        Returns the batting order for a team in a game, ordered by batting_order.
+        Returns a team's active batting order for a game.
+
+        Args:
+            game_id (str): Game identifier.
+            team_id (str): Team whose lineup should be returned.
+
+        Returns:
+            list: Active lineup entries ordered by batting order.
         """
         await self._ensure_pool()
 
@@ -120,8 +165,16 @@ class DBClient:
 
     async def get_next_batters(self, game_id: str, team_id: str, current_batting_index: int, count: int = 3) -> list:
         """
-        Returns the next N batters in the lineup after the current batting index.
-        Wraps around to the top of the order if needed.
+        Returns the next batters after the current batting index.
+
+        Args:
+            game_id (str): Game identifier.
+            team_id (str): Batting team identifier.
+            current_batting_index (int): Current 1-based batting index from game state.
+            count (int): Number of upcoming hitters to return.
+
+        Returns:
+            list: Upcoming lineup entries, wrapping around to the top as needed.
         """
         await self._ensure_pool()
 
@@ -132,6 +185,7 @@ class DBClient:
         total = len(lineup)
         result = []
         for i in range(1, count + 1):
+            # Batting order wraps, so modulo keeps the preview circular.
             idx = (current_batting_index + i - 1) % total
             result.append(lineup[idx])
         return result
@@ -142,11 +196,19 @@ class DBClient:
 
     async def get_player_by_jersey(self, game_id: str, jersey_number: str, team_side: Optional[str] = None) -> Optional[dict]:
         """
-        Find a player by jersey number within a game's rosters.
-        team_side: 'home' or 'away' to narrow the search.
+        Finds a player by jersey number within a game's rosters.
+
+        Args:
+            game_id (str): Game identifier used to restrict teams.
+            jersey_number (str): Jersey number observed or entered manually.
+            team_side (Optional[str]): Optional ``home`` or ``away`` team filter.
+
+        Returns:
+            Optional[dict]: Matching player/team row, or None when not found.
         """
         await self._ensure_pool()
 
+        # Team-side narrowing avoids ambiguous jersey matches across both rosters.
         if team_side == 'home':
             query = """
                 SELECT p.id, p.name, p.jersey_number, p.team_id, p.position,
@@ -192,7 +254,15 @@ class DBClient:
             return None
 
     async def get_player_by_id(self, player_id: str) -> Optional[dict]:
-        """Fetch a player by their ID with full details."""
+        """
+        Fetches a player by ID with team and media details.
+
+        Args:
+            player_id (str): Player identifier.
+
+        Returns:
+            Optional[dict]: Player/team row, or None when not found.
+        """
         await self._ensure_pool()
 
         query = """
@@ -217,9 +287,19 @@ class DBClient:
     # =========================================================================
 
     async def get_player_stats(self, player_id: str, stat_type: str = 'season') -> Optional[dict]:
-        """Fetch season or career stats for a player."""
+        """
+        Fetches the latest season or career stat row for a player.
+
+        Args:
+            player_id (str): Player identifier.
+            stat_type (str): Stat scope such as ``season`` or ``career``.
+
+        Returns:
+            Optional[dict]: Latest matching stats row, or None when unavailable.
+        """
         await self._ensure_pool()
 
+        # Latest season wins when multiple stat rows exist for the same stat type.
         query = """
             SELECT player_id, season, stat_type,
                    at_bats, hits, doubles, triples, home_runs, rbis,
@@ -245,7 +325,15 @@ class DBClient:
     # =========================================================================
 
     async def get_media_asset(self, asset_id: str) -> Optional[dict]:
-        """Fetch a media asset by ID."""
+        """
+        Fetches a media asset by ID.
+
+        Args:
+            asset_id (str): Media asset identifier.
+
+        Returns:
+            Optional[dict]: Asset metadata row, or None when not found.
+        """
         await self._ensure_pool()
 
         query = """
@@ -263,7 +351,16 @@ class DBClient:
             return None
 
     async def list_media_assets(self, asset_type: Optional[str] = None, player_id: Optional[str] = None) -> list:
-        """List media assets, optionally filtered by type and/or player."""
+        """
+        Lists media assets with optional type and player filters.
+
+        Args:
+            asset_type (Optional[str]): Optional asset type filter.
+            player_id (Optional[str]): Optional player ownership filter.
+
+        Returns:
+            list: Matching media asset rows ordered by display name.
+        """
         await self._ensure_pool()
 
         conditions = []
@@ -280,6 +377,7 @@ class DBClient:
             params.append(player_id)
             param_idx += 1
 
+        # Conditions are built only from known filters while values stay parameterized.
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         query = f"""
@@ -298,9 +396,24 @@ class DBClient:
             return []
 
     async def create_media_asset(self, asset_id: str, name: str, asset_type: str, file_path: str,
-                                  player_id: Optional[str] = None, team_id: Optional[str] = None,
-                                  duration_ms: Optional[int] = None, metadata: dict = None) -> Optional[dict]:
-        """Insert a new media asset record."""
+                                 player_id: Optional[str] = None, team_id: Optional[str] = None,
+                                 duration_ms: Optional[int] = None, metadata: dict = None) -> Optional[dict]:
+        """
+        Inserts a new media asset record.
+
+        Args:
+            asset_id (str): Unique media asset identifier.
+            name (str): Display name.
+            asset_type (str): Asset category.
+            file_path (str): Relative media path served by the API.
+            player_id (Optional[str]): Optional linked player.
+            team_id (Optional[str]): Optional linked team.
+            duration_ms (Optional[int]): Optional audio/video duration.
+            metadata (dict): Optional structured metadata.
+
+        Returns:
+            Optional[dict]: Created asset summary, or None on failure.
+        """
         await self._ensure_pool()
         import json
 
@@ -321,7 +434,15 @@ class DBClient:
             return None
 
     async def delete_media_asset(self, asset_id: str) -> bool:
-        """Delete a media asset by ID."""
+        """
+        Deletes a media asset by ID.
+
+        Args:
+            asset_id (str): Asset identifier to delete.
+
+        Returns:
+            bool: True when exactly one row was deleted.
+        """
         await self._ensure_pool()
 
         try:
@@ -337,7 +458,15 @@ class DBClient:
     # =========================================================================
 
     async def get_graphics_template(self, template_type: str) -> Optional[dict]:
-        """Fetch a graphics template by type."""
+        """
+        Fetches a graphics template by type.
+
+        Args:
+            template_type (str): Template key such as ``batter_intro``.
+
+        Returns:
+            Optional[dict]: Template row, or None when unavailable.
+        """
         await self._ensure_pool()
 
         query = """
@@ -356,7 +485,12 @@ class DBClient:
             return None
 
     async def list_graphics_templates(self) -> list:
-        """List all available graphics templates."""
+        """
+        Lists all available graphics templates.
+
+        Returns:
+            list: Template rows ordered by template type.
+        """
         await self._ensure_pool()
 
         query = """
@@ -381,7 +515,24 @@ class DBClient:
                                context_snapshot: dict = None, llm_model: Optional[str] = None,
                                generation_ms: Optional[int] = None, tts_model: Optional[str] = None,
                                tts_duration_ms: Optional[int] = None) -> Optional[int]:
-        """Persist a commentary entry for audit trail."""
+        """
+        Persists a commentary entry for audit trail and replay.
+
+        Args:
+            game_id (str): Game identifier.
+            text (str): Spoken commentary text.
+            source (str): ``llm``, ``template``, or ``manual`` source label.
+            source_event_ids (list): Event IDs used to produce the commentary.
+            audio_path (Optional[str]): Generated audio file path.
+            context_snapshot (dict): Game/player context used for generation.
+            llm_model (Optional[str]): LLM model used, if any.
+            generation_ms (Optional[int]): LLM/template generation duration.
+            tts_model (Optional[str]): TTS model used, if any.
+            tts_duration_ms (Optional[int]): Speech synthesis duration.
+
+        Returns:
+            Optional[int]: Commentary history row ID, or None on failure.
+        """
         await self._ensure_pool()
         import json
 
@@ -412,7 +563,23 @@ class DBClient:
                                target: str, payload: dict, source_event_ids: list = None,
                                priority: int = 5, conflict_group: Optional[str] = None,
                                requires_confirmation: bool = False) -> Optional[dict]:
-        """Insert a command into the queue."""
+        """
+        Inserts a command into the command queue.
+
+        Args:
+            command_id (str): Unique command identifier.
+            game_id (str): Game identifier.
+            command_type (str): Production command type.
+            target (str): Adapter target that will execute the command.
+            payload (dict): Adapter payload serialized to JSON.
+            source_event_ids (list): Source game/CV event IDs.
+            priority (int): Lower values execute first.
+            conflict_group (Optional[str]): Mutual-exclusion group for superseding.
+            requires_confirmation (bool): Whether manager approval is required.
+
+        Returns:
+            Optional[dict]: Inserted command summary, or None on failure.
+        """
         await self._ensure_pool()
         import json
 
@@ -439,9 +606,20 @@ class DBClient:
 
     async def update_command_status(self, command_id: str, status: str,
                                      error_message: Optional[str] = None) -> bool:
-        """Update a command's status in the queue."""
+        """
+        Updates a command's lifecycle status.
+
+        Args:
+            command_id (str): Command identifier.
+            status (str): New status such as started, completed, failed, or cancelled.
+            error_message (Optional[str]): Failure reason for failed commands.
+
+        Returns:
+            bool: True when exactly one row was updated.
+        """
         await self._ensure_pool()
 
+        # Lifecycle timestamps make queue history readable without extra status tables.
         time_field = ""
         if status == 'started':
             time_field = ", started_at = NOW()"
@@ -464,7 +642,16 @@ class DBClient:
             return False
 
     async def get_queued_commands(self, game_id: str, target: Optional[str] = None) -> list:
-        """Fetch pending/queued commands for a game, optionally filtered by target."""
+        """
+        Fetches commands that are eligible or nearly eligible for processing.
+
+        Args:
+            game_id (str): Game identifier.
+            target (Optional[str]): Optional adapter target filter.
+
+        Returns:
+            list: Queued, pending-approval, and approved command rows by priority/time.
+        """
         await self._ensure_pool()
 
         if target:
@@ -498,7 +685,17 @@ class DBClient:
 
     async def supersede_conflicting_commands(self, game_id: str, conflict_group: str,
                                               exclude_command_id: str) -> int:
-        """Mark all active commands in a conflict group as superseded, except the given one."""
+        """
+        Marks older commands in a conflict group as superseded.
+
+        Args:
+            game_id (str): Game identifier.
+            conflict_group (str): Mutual-exclusion group to clear.
+            exclude_command_id (str): New command ID that should remain active.
+
+        Returns:
+            int: Number of commands superseded.
+        """
         await self._ensure_pool()
 
         query = """
@@ -518,7 +715,16 @@ class DBClient:
             return 0
 
     async def approve_command(self, command_id: str, confirmed_by: str = 'manager') -> bool:
-        """Approve a pending command."""
+        """
+        Approves a pending command.
+
+        Args:
+            command_id (str): Command identifier to approve.
+            confirmed_by (str): Manager or system identity.
+
+        Returns:
+            bool: True when a pending command was approved.
+        """
         await self._ensure_pool()
 
         query = """
@@ -537,7 +743,17 @@ class DBClient:
 
     async def cancel_command(self, command_id: str, cancelled_by: str = 'manager',
                               reason: str = 'manual_cancel') -> bool:
-        """Cancel a queued or in-progress command."""
+        """
+        Cancels a queued or in-progress command.
+
+        Args:
+            command_id (str): Command identifier to cancel.
+            cancelled_by (str): Manager or system identity.
+            reason (str): Cancellation reason.
+
+        Returns:
+            bool: True when a cancellable command was updated.
+        """
         await self._ensure_pool()
 
         query = """
@@ -559,7 +775,15 @@ class DBClient:
     # =========================================================================
 
     async def get_game(self, game_id: str) -> Optional[dict]:
-        """Fetch game details including team info."""
+        """
+        Fetches game details including home and away team display data.
+
+        Args:
+            game_id (str): Game identifier.
+
+        Returns:
+            Optional[dict]: Game/team row, or None when not found.
+        """
         await self._ensure_pool()
 
         query = """
@@ -589,8 +813,17 @@ class DBClient:
     async def bulk_upsert_players(self, team_id: str, players: list) -> int:
         """
         Upsert multiple players for a team from a roster upload.
-        Each player dict should have: name, jersey_number, position, bat_hand, throw_hand.
-        Returns count of upserted players.
+
+        Args:
+            team_id (str): Team that owns the uploaded roster.
+            players (list): Player dictionaries with name, jersey number, position,
+                batting hand, and throwing hand fields.
+
+        Returns:
+            int: Count of players inserted or updated.
+
+        Side Effects:
+            Writes player rows inside a single Postgres transaction.
         """
         await self._ensure_pool()
 
@@ -610,6 +843,7 @@ class DBClient:
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
                     for p in players:
+                        # Player IDs are deterministic so repeated CSV uploads update the same rows.
                         pid = f"player_{team_id.replace('team_', '')}_{p['jersey_number']}"
                         await conn.execute(
                             query, pid, team_id, p['name'], str(p['jersey_number']),
@@ -623,7 +857,19 @@ class DBClient:
 
     async def save_roster_upload(self, team_id: str, file_name: str, player_count: int,
                                   status: str = 'processed', error_message: Optional[str] = None) -> Optional[int]:
-        """Record a roster upload event."""
+        """
+        Records a roster upload event.
+
+        Args:
+            team_id (str): Team associated with the upload.
+            file_name (str): Original uploaded file name.
+            player_count (int): Number of parsed players.
+            status (str): Processing status.
+            error_message (Optional[str]): Optional parsing or import error.
+
+        Returns:
+            Optional[int]: Upload audit row ID, or None on failure.
+        """
         await self._ensure_pool()
 
         query = """
@@ -640,8 +886,17 @@ class DBClient:
             return None
 
     async def get_active_players_from_events(self, game_id: str) -> dict:
-        """Find the active batter and pitcher by scanning historical events."""
+        """
+        Finds active batter and pitcher IDs by scanning historical pitch events.
+
+        Args:
+            game_id (str): Game identifier.
+
+        Returns:
+            dict: ``batter_id`` and ``pitcher_id`` from the latest pitch events.
+        """
         await self._ensure_pool()
+        # Latest pitch_result event carries the current batter context.
         query_batter = """
             SELECT payload->>'batterId' as batter_id
             FROM game_events
@@ -649,6 +904,7 @@ class DBClient:
             ORDER BY occurred_at DESC, sequence DESC
             LIMIT 1;
         """
+        # Pitcher is scanned separately so missing batter data does not hide pitcher data.
         query_pitcher = """
             SELECT payload->>'pitcherId' as pitcher_id
             FROM game_events
@@ -668,4 +924,3 @@ class DBClient:
         except Exception as e:
             logger.error(f"Error fetching active players from events: {e}")
         return res
-

@@ -1,5 +1,9 @@
 """
-Ollama HTTP client for Dugout.ai Commentary Engine.
+File: services/ai-orchestrator/llm_client.py
+Layer: Worker — Local LLM Client
+Purpose: Wraps Ollama's HTTP API for commentary text generation.
+         CommentaryEngine calls this client before falling back to templates.
+Dependencies: httpx AsyncClient, local Ollama server at OLLAMA_URL.
 """
 
 import logging
@@ -11,17 +15,34 @@ logger = logging.getLogger("ai-orchestrator-llm")
 OLLAMA_URL = "http://localhost:11434"
 
 class OllamaClient:
-    """Async client for local Ollama instance."""
+    """
+    Async client for a local Ollama instance.
+
+    Attributes:
+        base_url (str): Base URL for the Ollama HTTP server.
+        client (httpx.AsyncClient): Reused async HTTP client with generation timeout.
+    """
 
     def __init__(self, base_url: str = OLLAMA_URL):
         self.base_url = base_url
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=30.0)
 
     async def close(self):
+        """
+        Closes the underlying HTTP client.
+
+        Side Effects:
+            Releases httpx connection resources.
+        """
         await self.client.aclose()
 
     async def check_health(self) -> bool:
-        """Check if Ollama server is up and responsive."""
+        """
+        Checks whether the Ollama server is reachable.
+
+        Returns:
+            bool: True when Ollama responds with HTTP 200, otherwise False.
+        """
         try:
             response = await self.client.get("/")
             return response.status_code == 200
@@ -29,7 +50,15 @@ class OllamaClient:
             return False
 
     async def check_model_available(self, model: str) -> bool:
-        """Check if the requested model is pulled and available."""
+        """
+        Checks whether a requested model is available in Ollama.
+
+        Args:
+            model (str): Model name or prefix, for example ``llama3.2:1b``.
+
+        Returns:
+            bool: True when the model appears in Ollama's tag list.
+        """
         try:
             response = await self.client.get("/api/tags")
             if response.status_code == 200:
@@ -44,12 +73,19 @@ class OllamaClient:
 
     async def generate(self, prompt: str, system_prompt: Optional[str] = None, model: str = "llama3.2:1b") -> dict:
         """
-        Generate text completion for the prompt.
-        Returns a dict containing:
-        - 'text': the generated text
-        - 'prompt_tokens': tokens used in prompt (if available)
-        - 'completion_tokens': tokens used in completion (if available)
-        - 'duration_ms': generation time in ms
+        Generates a non-streaming text completion from Ollama.
+
+        Args:
+            prompt (str): User prompt sent to the model.
+            system_prompt (Optional[str]): Optional system instruction for style/context.
+            model (str): Ollama model name to use for generation.
+
+        Returns:
+            dict: Generated text, token counts when available, duration in ms, and
+                an ``error`` field when generation fails.
+
+        Side Effects:
+            Performs an HTTP POST to the local Ollama API.
         """
         payload = {
             "model": model,

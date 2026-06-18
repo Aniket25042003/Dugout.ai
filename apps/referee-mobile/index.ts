@@ -1,3 +1,11 @@
+/**
+ * @file apps/referee-mobile/index.ts
+ * @layer Mobile — Expo Bootstrap
+ * @description Registers the referee mobile app root component for Expo Go and
+ *              native builds.
+ * @dependencies Expo registerRootComponent, App component
+ */
+
 import { registerRootComponent } from 'expo';
 
 import App from './App';

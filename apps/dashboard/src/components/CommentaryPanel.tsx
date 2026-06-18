@@ -1,12 +1,22 @@
+/**
+ * @file apps/dashboard/src/components/CommentaryPanel.tsx
+ * @layer Frontend — Commentary Control UI
+ * @description Displays generated commentary, maintains a recent commentary log,
+ *              and sends mute/regenerate/manual controls to the orchestrator.
+ * @dependencies CommentaryState, controlCommentary API
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import type { CommentaryState } from '../api/sseClient';
 import { controlCommentary } from '../api/dashboardApi';
 
+/** Props for the commentary status and control panel. */
 type Props = {
   commentaryState: CommentaryState;
   gameId: string;
 };
 
+/** Local commentary history entry rendered in the dashboard log. */
 type LogEntry = {
   id: string;
   text: string;
@@ -14,6 +24,12 @@ type LogEntry = {
   timestamp: Date;
 };
 
+/**
+ * Renders commentary state, manual speech controls, and recent commentary history.
+ *
+ * @param props - Current commentary state and game ID for control actions
+ * @returns React commentary control panel
+ */
 export const CommentaryPanel: React.FC<Props> = ({
   commentaryState,
   gameId,
@@ -40,7 +56,7 @@ export const CommentaryPanel: React.FC<Props> = ({
       timestamp: new Date(),
     };
 
-    setCommentaryLog((prev) => [...prev, newEntry].slice(-50)); // keep last 50
+    setCommentaryLog((prev) => [...prev, newEntry].slice(-50)); // Keep the log bounded for long games.
   }, [commentaryState]);
 
   // Autoscroll

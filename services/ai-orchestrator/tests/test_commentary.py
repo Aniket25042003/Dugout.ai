@@ -1,8 +1,17 @@
+"""
+File: services/ai-orchestrator/tests/test_commentary.py
+Layer: Tests — Commentary Engine
+Purpose: Verifies local game-state reduction and template fallback generation for
+         the commentary pipeline.
+Dependencies: pytest, AsyncMock, MagicMock, CommentaryEngine.
+"""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from commentary_engine import CommentaryEngine
 
 @pytest.mark.asyncio
+# Verifies that pitch events update count and active player context.
 async def test_commentary_state_updates():
     db = AsyncMock()
     llm = AsyncMock()
@@ -42,6 +51,7 @@ async def test_commentary_state_updates():
     assert state["strikes"] == 1
 
 @pytest.mark.asyncio
+# Verifies that template fallback produces player-specific play-by-play text.
 async def test_commentary_fallback_generation():
     db = AsyncMock()
     llm = AsyncMock()

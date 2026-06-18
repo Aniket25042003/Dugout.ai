@@ -1,8 +1,9 @@
 """
-Dugout.ai AI Orchestrator — FastAPI Application.
-
-Phase 3: Extended with media asset management, lineup/roster APIs,
-player stats, command queue management, and commentary control endpoints.
+File: services/ai-orchestrator/main.py
+Layer: API — AI Orchestrator FastAPI Service
+Purpose: Exposes dashboard-facing APIs for rosters, players, media, templates,
+         commands, music controls, and commentary controls.
+Dependencies: FastAPI, DBClient, MediaManager, NATS, generated protobuf imports.
 """
 
 import asyncio
@@ -80,6 +81,12 @@ if os.path.isdir(MEDIA_BASE_PATH):
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    Initializes shared database and NATS connections for the API process.
+
+    Side Effects:
+        Opens the asyncpg pool and attempts a NATS connection used by control routes.
+    """
     global nc
     logger.info("Starting AI Orchestrator (Phase 3)...")
     logger.info(f"NATS target: {NATS_URL}")
@@ -96,6 +103,12 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """
+    Closes shared external connections during FastAPI shutdown.
+
+    Side Effects:
+        Closes NATS and database pool resources.
+    """
     global nc
     logger.info("Stopping AI Orchestrator...")
     if nc:
@@ -106,6 +119,12 @@ async def shutdown_event():
 
 @app.get("/health")
 async def health_check():
+    """
+    Returns service health and contract import status.
+
+    Returns:
+        dict: Health payload for local checks and deployment probes.
+    """
     return {
         "status": "healthy",
         "service": "ai-orchestrator",
@@ -119,12 +138,16 @@ async def health_check():
 # =========================================================================
 
 class PlayerOverrideRequest(BaseModel):
+    """Request body for manually overriding the currently detected player."""
+
     game_id: str
     jersey_number: str
     team_side: Optional[str] = None  # 'home' or 'away'
     reason: Optional[str] = "manual_override"
 
 class MusicControlRequest(BaseModel):
+    """Request body for publishing manual music-control commands."""
+
     game_id: str
     action: str  # 'play', 'stop', 'fade_out', 'emergency_stop'
     player_id: Optional[str] = None
@@ -132,15 +155,21 @@ class MusicControlRequest(BaseModel):
     fade_ms: Optional[int] = 2000
 
 class CommentaryControlRequest(BaseModel):
+    """Request body for publishing manual commentary-control commands."""
+
     game_id: str
     action: str  # 'mute', 'unmute', 'regenerate', 'manual'
     text: Optional[str] = None
 
 class CommandActionRequest(BaseModel):
+    """Request body for approving or cancelling a queued command."""
+
     action: str  # 'approve' or 'cancel'
     reason: Optional[str] = None
 
 class RosterEntry(BaseModel):
+    """Single roster player entry used by JSON roster upload."""
+
     name: str
     jersey_number: str
     position: Optional[str] = ""
@@ -148,6 +177,8 @@ class RosterEntry(BaseModel):
     throw_hand: Optional[str] = "R"
 
 class RosterUploadRequest(BaseModel):
+    """Request body for uploading a JSON team roster."""
+
     team_id: str
     players: list[RosterEntry]
 
@@ -158,7 +189,15 @@ class RosterUploadRequest(BaseModel):
 
 @app.get("/api/v1/games/{game_id}")
 async def get_game(game_id: str):
-    """Get game details including team info."""
+    """
+    Gets game details including team info.
+
+    Args:
+        game_id (str): Game identifier from the URL path.
+
+    Returns:
+        dict: Game and team metadata.
+    """
     game = await db.get_game(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -166,7 +205,16 @@ async def get_game(game_id: str):
 
 @app.get("/api/v1/lineup")
 async def get_lineup(game_id: str = Query(...), team_id: str = Query(...)):
-    """Get ordered batting lineup for a team in a game."""
+    """
+    Gets the ordered batting lineup for a team in a game.
+
+    Args:
+        game_id (str): Game identifier query parameter.
+        team_id (str): Team identifier query parameter.
+
+    Returns:
+        dict: Game/team IDs and ordered lineup rows.
+    """
     lineup = await db.get_game_lineup_ordered(game_id, team_id)
     return {"game_id": game_id, "team_id": team_id, "lineup": lineup}
 
@@ -177,13 +225,32 @@ async def get_next_batters(
     current_index: int = Query(1),
     count: int = Query(3),
 ):
-    """Get the next N batters in the lineup from current batting index."""
+    """
+    Gets upcoming batters from the current batting index.
+
+    Args:
+        game_id (str): Game identifier.
+        team_id (str): Batting team identifier.
+        current_index (int): Current batting index from game state.
+        count (int): Number of batters to return.
+
+    Returns:
+        dict: Upcoming batter rows.
+    """
     batters = await db.get_next_batters(game_id, team_id, current_index, count)
     return {"game_id": game_id, "team_id": team_id, "next_batters": batters}
 
 @app.get("/api/v1/roster")
 async def get_roster(game_id: str = Query(...)):
-    """Get full roster for all teams in a game."""
+    """
+    Gets the full roster for both teams in a game.
+
+    Args:
+        game_id (str): Game identifier.
+
+    Returns:
+        dict: Player list and count.
+    """
     roster = await db.get_broader_roster(game_id)
     return {"game_id": game_id, "players": roster, "count": len(roster)}
 
@@ -194,7 +261,15 @@ async def get_roster(game_id: str = Query(...)):
 
 @app.get("/api/v1/players/{player_id}")
 async def get_player(player_id: str):
-    """Get player details."""
+    """
+    Gets player details by ID.
+
+    Args:
+        player_id (str): Player identifier.
+
+    Returns:
+        dict: Player and team metadata.
+    """
     player = await db.get_player_by_id(player_id)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -202,7 +277,16 @@ async def get_player(player_id: str):
 
 @app.get("/api/v1/players/{player_id}/stats")
 async def get_player_stats(player_id: str, stat_type: str = Query("season")):
-    """Get player statistics."""
+    """
+    Gets player statistics.
+
+    Args:
+        player_id (str): Player identifier.
+        stat_type (str): Stat scope, defaulting to season.
+
+    Returns:
+        dict: Latest matching player stat row.
+    """
     stats = await db.get_player_stats(player_id, stat_type)
     if not stats:
         raise HTTPException(status_code=404, detail="Stats not found for player")
@@ -210,7 +294,17 @@ async def get_player_stats(player_id: str, stat_type: str = Query("season")):
 
 @app.get("/api/v1/players/by-jersey/{jersey_number}")
 async def get_player_by_jersey(jersey_number: str, game_id: str = Query(...), team_side: Optional[str] = None):
-    """Find a player by jersey number within a game."""
+    """
+    Finds a player by jersey number within a game.
+
+    Args:
+        jersey_number (str): Jersey number from the URL path.
+        game_id (str): Game identifier query parameter.
+        team_side (Optional[str]): Optional home/away team-side filter.
+
+    Returns:
+        dict: Matching player row.
+    """
     player = await db.get_player_by_jersey(game_id, jersey_number, team_side)
     if not player:
         raise HTTPException(status_code=404, detail=f"No player found with jersey #{jersey_number}")
@@ -224,9 +318,16 @@ async def get_player_by_jersey(jersey_number: str, game_id: str = Query(...), te
 @app.post("/api/v1/override")
 async def override_player(req: PlayerOverrideRequest):
     """
-    Override the currently detected player.
-    Finds the player by jersey number and triggers re-evaluation of
-    music, graphics, commentary, and stats for the new player.
+    Overrides the currently detected player from the dashboard.
+
+    Args:
+        req (PlayerOverrideRequest): Jersey/team-side override request.
+
+    Returns:
+        dict: Override result with player, stats, and walk-up track context.
+
+    Side Effects:
+        Posts a substitution event to the Go event gateway for downstream state updates.
     """
     player = await db.get_player_by_jersey(req.game_id, req.jersey_number, req.team_side)
     if not player:
@@ -241,7 +342,7 @@ async def override_player(req: PlayerOverrideRequest):
     else:
         player_out_id = active.get("batter_id") or ""
 
-    # Build Substitution event
+    # Build a normal game event so the event gateway/reducer remains source of truth.
     sub_event = {
         "eventId": f"evt_override_{uuid.uuid4().hex[:12]}",
         "gameId": req.game_id,
@@ -287,7 +388,18 @@ async def override_player(req: PlayerOverrideRequest):
 
 @app.post("/api/v1/roster/upload")
 async def upload_roster(req: RosterUploadRequest):
-    """Upload/update a team roster with player list."""
+    """
+    Uploads or updates a team roster from JSON.
+
+    Args:
+        req (RosterUploadRequest): Team ID and player list.
+
+    Returns:
+        dict: Import status and upsert count.
+
+    Side Effects:
+        Upserts player rows and records a roster upload audit row.
+    """
     players = [p.model_dump() for p in req.players]
     count = await db.bulk_upsert_players(req.team_id, players)
     await db.save_roster_upload(req.team_id, "api_upload", count)
@@ -299,8 +411,19 @@ async def upload_roster_csv(
     file: UploadFile = File(...),
 ):
     """
-    Upload a CSV file with roster data.
-    Expected columns: name, jersey_number, position, bat_hand, throw_hand
+    Uploads a CSV file with roster data.
+
+    Expected columns: name, jersey_number, position, bat_hand, throw_hand.
+
+    Args:
+        team_id (str): Team identifier from multipart form data.
+        file (UploadFile): Uploaded CSV file.
+
+    Returns:
+        dict: Import status, file name, and upsert count.
+
+    Side Effects:
+        Parses CSV, upserts player rows, and records success/failure upload history.
     """
     content = await file.read()
     try:
@@ -333,13 +456,30 @@ async def list_media_assets(
     asset_type: Optional[str] = Query(None),
     player_id: Optional[str] = Query(None),
 ):
-    """List media assets with optional filtering."""
+    """
+    Lists media assets with optional filtering.
+
+    Args:
+        asset_type (Optional[str]): Optional asset type filter.
+        player_id (Optional[str]): Optional player asset filter.
+
+    Returns:
+        dict: Asset list and count, including file validation from MediaManager.
+    """
     assets = await media.list_assets(asset_type, player_id)
     return {"assets": assets, "count": len(assets)}
 
 @app.get("/api/v1/media/{asset_id}")
 async def get_media_asset(asset_id: str):
-    """Get a specific media asset by ID."""
+    """
+    Gets a specific media asset by ID.
+
+    Args:
+        asset_id (str): Media asset identifier.
+
+    Returns:
+        dict: Asset metadata plus file existence flag.
+    """
     asset = await db.get_media_asset(asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Media asset not found")
@@ -355,7 +495,23 @@ async def upload_media_asset(
     duration_ms: Optional[int] = Form(None),
     file: UploadFile = File(...),
 ):
-    """Upload a new media asset file."""
+    """
+    Uploads a new media asset file.
+
+    Args:
+        name (str): Display name from multipart form data.
+        asset_type (str): Asset category controlling storage directory.
+        player_id (Optional[str]): Optional linked player.
+        team_id (Optional[str]): Optional linked team.
+        duration_ms (Optional[int]): Optional duration metadata.
+        file (UploadFile): Uploaded media file.
+
+    Returns:
+        dict: Upload status and created asset metadata.
+
+    Side Effects:
+        Writes the uploaded file under media storage and creates a DB asset row.
+    """
     asset_id = f"asset_{uuid.uuid4().hex[:12]}"
     file_data = await file.read()
 
@@ -376,7 +532,18 @@ async def upload_media_asset(
 
 @app.delete("/api/v1/media/{asset_id}")
 async def delete_media_asset(asset_id: str):
-    """Delete a media asset."""
+    """
+    Deletes a media asset.
+
+    Args:
+        asset_id (str): Media asset identifier.
+
+    Returns:
+        dict: Deletion status.
+
+    Side Effects:
+        Deletes the DB row and, by MediaManager default, the local media file.
+    """
     success = await media.delete_asset(asset_id)
     if not success:
         raise HTTPException(status_code=404, detail="Asset not found or delete failed")
@@ -384,7 +551,15 @@ async def delete_media_asset(asset_id: str):
 
 @app.get("/api/v1/media/validate/{game_id}")
 async def validate_game_assets(game_id: str):
-    """Validate all media assets required for a game."""
+    """
+    Validates media assets required for a game.
+
+    Args:
+        game_id (str): Game identifier.
+
+    Returns:
+        dict: Validation report for walk-up tracks, headshots, and logos.
+    """
     report = await media.validate_game_assets(game_id)
     return report
 
@@ -395,13 +570,26 @@ async def validate_game_assets(game_id: str):
 
 @app.get("/api/v1/templates")
 async def list_templates():
-    """List all graphics templates."""
+    """
+    Lists graphics templates.
+
+    Returns:
+        dict: Template rows from the database.
+    """
     templates = await media.list_templates()
     return {"templates": templates}
 
 @app.get("/api/v1/templates/{template_type}")
 async def get_template(template_type: str):
-    """Get a specific graphics template by type."""
+    """
+    Gets a graphics template by type.
+
+    Args:
+        template_type (str): Template key from the URL path.
+
+    Returns:
+        dict: Template row.
+    """
     template = await media.get_template(template_type)
     if not template:
         raise HTTPException(status_code=404, detail=f"Template '{template_type}' not found")
@@ -414,13 +602,34 @@ async def get_template(template_type: str):
 
 @app.get("/api/v1/commands")
 async def list_commands(game_id: str = Query(...), target: Optional[str] = Query(None)):
-    """List active commands in the queue."""
+    """
+    Lists active commands in the queue.
+
+    Args:
+        game_id (str): Game identifier.
+        target (Optional[str]): Optional adapter target filter.
+
+    Returns:
+        dict: Command list and count.
+    """
     commands = await db.get_queued_commands(game_id, target)
     return {"commands": commands, "count": len(commands)}
 
 @app.post("/api/v1/commands/{command_id}")
 async def command_action(command_id: str, req: CommandActionRequest):
-    """Approve or cancel a command."""
+    """
+    Approves or cancels a queued command.
+
+    Args:
+        command_id (str): Command identifier from the URL path.
+        req (CommandActionRequest): Requested action and optional reason.
+
+    Returns:
+        dict: Updated command status.
+
+    Side Effects:
+        Updates command queue status in Postgres.
+    """
     if req.action == "approve":
         success = await db.approve_command(command_id)
         if not success:
@@ -441,7 +650,18 @@ async def command_action(command_id: str, req: CommandActionRequest):
 
 @app.post("/api/v1/music/control")
 async def music_control(req: MusicControlRequest):
-    """Control music playback. Wired to music adapter in PR 2."""
+    """
+    Publishes a manual music-control command.
+
+    Args:
+        req (MusicControlRequest): Music action request.
+
+    Returns:
+        dict: Accepted status for the published command.
+
+    Side Effects:
+        Publishes JSON on ``dugout.production.music.control``.
+    """
     if not nc:
         raise HTTPException(status_code=500, detail="NATS not connected")
     try:
@@ -465,7 +685,18 @@ async def music_control(req: MusicControlRequest):
 
 @app.post("/api/v1/commentary/control")
 async def commentary_control(req: CommentaryControlRequest):
-    """Control commentary generation. Wired to commentary engine in PR 4."""
+    """
+    Publishes a manual commentary-control command.
+
+    Args:
+        req (CommentaryControlRequest): Commentary action request.
+
+    Returns:
+        dict: Accepted status for the published command.
+
+    Side Effects:
+        Publishes JSON on ``dugout.production.commentary.control``.
+    """
     if not nc:
         raise HTTPException(status_code=500, detail="NATS not connected")
     try:
@@ -481,4 +712,3 @@ async def commentary_control(req: CommentaryControlRequest):
     except Exception as e:
         logger.error("Failed to publish commentary control: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
-

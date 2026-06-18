@@ -1,3 +1,8 @@
+// File: services/event-gateway/internal/server/server.go
+// Layer: API Gateway — HTTP/SSE/NATS Server
+// Purpose: Handles event ingestion, replayable SSE streams, in-memory game state,
+// and NATS fan-in for production status updates.
+// Dependencies: internal db/reducer packages, NATS, protojson, net/http.
 package server
 
 import (
@@ -17,15 +22,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Server coordinates HTTP handlers, NATS subscriptions, SSE broadcasting, and cached state.
 type Server struct {
-	db        *db.Database
-	nc        *nats.Conn
-	sse       *SSEBroker
-	games     map[string]*dugoutv1.GameState
-	gamesMu   sync.RWMutex
-	natsSubs  []*nats.Subscription
+	db       *db.Database
+	nc       *nats.Conn
+	sse      *SSEBroker
+	games    map[string]*dugoutv1.GameState
+	gamesMu  sync.RWMutex
+	natsSubs []*nats.Subscription
 }
 
+// New constructs a gateway server with an empty game-state cache and SSE broker.
 func New(database *db.Database, natsConn *nats.Conn) *Server {
 	return &Server{
 		db:    database,
@@ -35,8 +42,9 @@ func New(database *db.Database, natsConn *nats.Conn) *Server {
 	}
 }
 
+// Start subscribes to NATS subjects that should be forwarded to dashboard SSE clients.
 func (s *Server) Start(ctx context.Context) error {
-	// Subscribe to all game events from NATS
+	// Game events drive reducer state and timeline updates.
 	sub, err := s.nc.Subscribe("dugout.game.*.events", func(msg *nats.Msg) {
 		s.handleNatsEvent(msg)
 	})
@@ -46,7 +54,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.natsSubs = append(s.natsSubs, sub)
 	log.Println("Subscribed to NATS subject: dugout.game.*.events")
 
-	// Subscribe to production music state
+	// Production state subjects are forwarded as typed SSE frames.
 	subMusic, err := s.nc.Subscribe("dugout.production.music.state", func(msg *nats.Msg) {
 		s.handleMusicState(msg)
 	})
@@ -85,6 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
+// Stop unsubscribes from all NATS subjects owned by the server.
 func (s *Server) Stop() {
 	for _, sub := range s.natsSubs {
 		if sub != nil {
@@ -93,8 +102,7 @@ func (s *Server) Stop() {
 	}
 }
 
-
-// IngestEvent handles HTTP POST /api/v1/events from referee app
+// IngestEvent handles HTTP POST /api/v1/events from the referee app.
 func (s *Server) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -123,17 +131,17 @@ func (s *Server) IngestEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Server enrichment
+	// Server enrichment records when the gateway accepted the official event.
 	event.ReceivedAt = timestamppb.Now()
 
-	// 1. Write to Postgres
+	// Persist before publishing so replay can recover events even if NATS is transiently down.
 	if err := s.db.SaveGameEvent(r.Context(), &event); err != nil {
 		log.Printf("Failed to save event in DB: %v", err)
 		http.Error(w, "Database error saving event", http.StatusInternalServerError)
 		return
 	}
 
-	// 2. Publish to NATS
+	// Publish the accepted event for orchestrator automation and SSE reducer updates.
 	eventJSON, err := protojson.Marshal(&event)
 	if err != nil {
 		http.Error(w, "Serialization error", http.StatusInternalServerError)
@@ -150,7 +158,7 @@ func (s *Server) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"created","event_id":"` + event.EventId + `"}`))
 }
 
-// SSEStream upgrades connection and streams events + state for a game
+// SSEStream streams historical replay frames followed by live updates for one game.
 func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 	gameID := r.URL.Query().Get("game_id")
 	if gameID == "" {
@@ -158,7 +166,7 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch historical events to build replay payload
+	// Fetch historical events to build a deterministic replay payload for new clients.
 	events, err := s.db.GetGameEvents(r.Context(), gameID)
 	if err != nil {
 		log.Printf("Failed to retrieve game events for replay: %v", err)
@@ -166,7 +174,7 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Replay events to compute current starting state for this connection
+	// Replay events to compute the current starting state for this connection.
 	state := &dugoutv1.GameState{
 		GameId: gameID,
 		Inning: 1,
@@ -176,10 +184,10 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 	var initialMsgs [][]byte
 	for _, evt := range events {
 		state = reducer.Reduce(state, evt)
-		
+
 		evtJSON, _ := protojson.Marshal(evt)
 		stateJSON, _ := protojson.Marshal(state)
-		
+
 		frame := map[string]interface{}{
 			"type":  "game_state",
 			"event": json.RawMessage(evtJSON),
@@ -204,6 +212,7 @@ func (s *Server) SSEStream(w http.ResponseWriter, r *http.Request) {
 	s.sse.ServeHTTPWithInitial(w, r, initialMsgs)
 }
 
+// handleNatsEvent reduces an accepted game event and broadcasts the new state frame.
 func (s *Server) handleNatsEvent(msg *nats.Msg) {
 	var event dugoutv1.GameEvent
 	if err := protojson.Unmarshal(msg.Data, &event); err != nil {
@@ -227,7 +236,7 @@ func (s *Server) handleNatsEvent(msg *nats.Msg) {
 	s.games[event.GameId] = newState
 	s.gamesMu.Unlock()
 
-	// Marshal both event and new state into a single frame and broadcast
+	// Broadcast event and reduced state together so the dashboard updates atomically.
 	eventJSON, _ := protojson.Marshal(&event)
 	stateJSON, _ := protojson.Marshal(newState)
 
@@ -240,6 +249,7 @@ func (s *Server) handleNatsEvent(msg *nats.Msg) {
 	s.sse.Broadcast(frameBytes)
 }
 
+// handleMusicState forwards music adapter state as an SSE frame.
 func (s *Server) handleMusicState(msg *nats.Msg) {
 	frame := map[string]interface{}{
 		"type": "music_state",
@@ -249,6 +259,7 @@ func (s *Server) handleMusicState(msg *nats.Msg) {
 	s.sse.Broadcast(frameBytes)
 }
 
+// handleGraphicsState forwards graphics adapter state as an SSE frame.
 func (s *Server) handleGraphicsState(msg *nats.Msg) {
 	frame := map[string]interface{}{
 		"type": "graphics_state",
@@ -258,6 +269,7 @@ func (s *Server) handleGraphicsState(msg *nats.Msg) {
 	s.sse.Broadcast(frameBytes)
 }
 
+// handleCommentaryState forwards commentary engine state as an SSE frame.
 func (s *Server) handleCommentaryState(msg *nats.Msg) {
 	frame := map[string]interface{}{
 		"type": "commentary_state",
@@ -267,6 +279,7 @@ func (s *Server) handleCommentaryState(msg *nats.Msg) {
 	s.sse.Broadcast(frameBytes)
 }
 
+// handleCommandStatus forwards command queue lifecycle updates as SSE frames.
 func (s *Server) handleCommandStatus(msg *nats.Msg) {
 	frame := map[string]interface{}{
 		"type": "command_status",
@@ -276,7 +289,7 @@ func (s *Server) handleCommandStatus(msg *nats.Msg) {
 	s.sse.Broadcast(frameBytes)
 }
 
-
+// loadOrCreateGameState returns cached state or rebuilds it from stored events.
 func (s *Server) loadOrCreateGameState(ctx context.Context, gameID string) (*dugoutv1.GameState, error) {
 	s.gamesMu.Lock()
 	defer s.gamesMu.Unlock()

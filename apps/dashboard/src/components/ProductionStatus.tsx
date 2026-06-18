@@ -1,5 +1,14 @@
+/**
+ * @file apps/dashboard/src/components/ProductionStatus.tsx
+ * @layer Frontend — System Status UI
+ * @description Displays high-level readiness for camera, radar, audio, graphics,
+ *              and commentary production services.
+ * @dependencies React
+ */
+
 import React from 'react';
 
+/** Props for hardware and service status indicators. */
 type Props = {
   liveCameraOk: boolean;
   radarOk: boolean;
@@ -8,6 +17,12 @@ type Props = {
   commentaryOk: boolean;
 };
 
+/**
+ * Renders service/hardware readiness indicators for the operator.
+ *
+ * @param props - Boolean health flags for production dependencies
+ * @returns React production status card
+ */
 export const ProductionStatus: React.FC<Props> = ({
   liveCameraOk,
   radarOk,

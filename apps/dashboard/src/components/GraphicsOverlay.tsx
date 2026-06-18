@@ -1,9 +1,24 @@
+/**
+ * @file apps/dashboard/src/components/GraphicsOverlay.tsx
+ * @layer Frontend — Broadcast Graphics Overlay
+ * @description Renders the active batter, pitcher, lower-third, speed, or sponsor
+ *              overlay on top of the camera surface.
+ * @dependencies GraphicsState from sseClient
+ */
+
 import type { GraphicsState } from '../api/sseClient';
 
+/** Props for the graphics overlay renderer. */
 type Props = {
   graphicsState: GraphicsState;
 };
 
+/**
+ * Renders the currently active graphics overlay from orchestrator state.
+ *
+ * @param props - Current graphics state snapshot
+ * @returns React overlay markup or null when no overlay is active
+ */
 export const GraphicsOverlay: React.FC<Props> = ({ graphicsState }) => {
   const { activeOverlay, overlayData } = graphicsState;
 

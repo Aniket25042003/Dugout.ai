@@ -1,8 +1,9 @@
 """
-Graphics Adapter for Dugout.ai.
-
-Resolves graphics templates and details from the database and publishes overlay state
-to NATS to display scoreboard, player intros, and alerts on the dashboard camera overlay.
+File: services/ai-orchestrator/graphics_adapter.py
+Layer: Worker — Graphics Production Adapter
+Purpose: Resolves player/template data and publishes overlay state for the dashboard.
+         Commands arrive from CommandQueue after game events or manual controls.
+Dependencies: DBClient player/stat/template lookups, asyncio dismiss tasks, NATS state bus.
 """
 
 import asyncio
@@ -15,6 +16,12 @@ logger = logging.getLogger("ai-orchestrator-graphics")
 class GraphicsAdapter:
     """
     Graphics Adapter that manages the overlay display state and auto-dismiss lifecycles.
+
+    Attributes:
+        db: Database client used to resolve players, stats, and graphics templates.
+        nc: Optional NATS connection used to publish overlay state snapshots.
+        _dismiss_task (Optional[asyncio.Task]): Pending auto-hide task for overlays.
+        _current_overlay_state (dict): Last published overlay and scoreboard state.
     """
 
     def __init__(self, db_client, nats_conn=None):
@@ -39,6 +46,14 @@ class GraphicsAdapter:
     async def handle_command(self, cmd_id: str, cmd_type: str, payload: dict):
         """
         Handler registered with the CommandQueue.
+
+        Args:
+            cmd_id (str): Production command ID being executed.
+            cmd_type (str): Graphics command type to dispatch.
+            payload (dict): Adapter-specific payload, usually player or scoreboard data.
+
+        Side Effects:
+            Updates in-memory overlay state and publishes the new state to NATS.
         """
         logger.info("GraphicsAdapter handling command %s: type=%s", cmd_id, cmd_type)
 
@@ -58,16 +73,26 @@ class GraphicsAdapter:
             logger.warning("GraphicsAdapter received unhandled command type: %s", cmd_type)
 
     async def _show_batter_intro(self, payload: dict):
+        """
+        Builds and publishes a batter introduction overlay.
+
+        Args:
+            payload (dict): Command payload containing ``playerId``.
+
+        Side Effects:
+            Reads player/stat/template rows, updates overlay state, publishes NATS,
+            and may schedule an auto-dismiss task.
+        """
         player_id = payload.get("playerId")
         player = await self.db.get_player_by_id(player_id)
         if not player:
             logger.error("Player %s not found for batter intro", player_id)
             return
 
-        # Fetch stats
+        # Batting stats fill the intro card; missing stats fall back to scoreboard-safe zeros.
         stats = await self.db.get_player_stats(player_id)
         
-        # Fetch template
+        # Template controls CSS class and auto-dismiss duration without code changes.
         template = await self.db.get_graphics_template("batter_intro")
         duration = template.get("display_duration_ms", 8000) if template else 8000
 
@@ -95,16 +120,26 @@ class GraphicsAdapter:
             self._schedule_auto_dismiss(duration)
 
     async def _show_pitcher_intro(self, payload: dict):
+        """
+        Builds and publishes a pitcher introduction overlay.
+
+        Args:
+            payload (dict): Command payload containing ``playerId``.
+
+        Side Effects:
+            Reads player/stat/template rows, updates overlay state, publishes NATS,
+            and may schedule an auto-dismiss task.
+        """
         player_id = payload.get("playerId")
         player = await self.db.get_player_by_id(player_id)
         if not player:
             logger.error("Player %s not found for pitcher intro", player_id)
             return
 
-        # Fetch stats
+        # Pitching stats fill the intro card; missing stats fall back to neutral values.
         stats = await self.db.get_player_stats(player_id)
         
-        # Fetch template
+        # Template controls CSS class and auto-dismiss duration without code changes.
         template = await self.db.get_graphics_template("pitcher_intro")
         duration = template.get("display_duration_ms", 6000) if template else 6000
 
@@ -132,6 +167,15 @@ class GraphicsAdapter:
             self._schedule_auto_dismiss(duration)
 
     async def _show_lower_third(self, payload: dict):
+        """
+        Publishes a text lower-third overlay.
+
+        Args:
+            payload (dict): Contains optional ``title`` and ``subtitle`` strings.
+
+        Side Effects:
+            Updates overlay state, publishes NATS, and may schedule auto-dismiss.
+        """
         template = await self.db.get_graphics_template("lower_third")
         duration = template.get("display_duration_ms", 5000) if template else 5000
 
@@ -149,6 +193,15 @@ class GraphicsAdapter:
             self._schedule_auto_dismiss(duration)
 
     async def _show_speed_display(self, payload: dict):
+        """
+        Publishes a short-lived pitch speed overlay.
+
+        Args:
+            payload (dict): Contains optional ``speedMph`` and ``pitchType`` fields.
+
+        Side Effects:
+            Updates overlay state, publishes NATS, and may schedule auto-dismiss.
+        """
         template = await self.db.get_graphics_template("speed_display")
         duration = template.get("display_duration_ms", 3000) if template else 3000
 
@@ -166,7 +219,16 @@ class GraphicsAdapter:
             self._schedule_auto_dismiss(duration)
 
     async def _update_scoreboard(self, payload: dict):
-        # Update the embedded scoreboard state
+        """
+        Merges a scoreboard payload into the current graphics state.
+
+        Args:
+            payload (dict): Scoreboard fields such as runs, inning, count, and bases.
+
+        Side Effects:
+            Publishes the updated graphics state to NATS.
+        """
+        # Only accept known scoreboard keys so unrelated payload fields cannot leak to the UI.
         for key in self._current_overlay_state["scoreboardData"].keys():
             if key in payload:
                 self._current_overlay_state["scoreboardData"][key] = payload[key]
@@ -174,18 +236,42 @@ class GraphicsAdapter:
         await self._publish_state()
 
     async def _hide_overlay(self):
+        """
+        Clears the active overlay while preserving scoreboard state.
+
+        Side Effects:
+            Publishes the hidden-overlay state to NATS.
+        """
         self._current_overlay_state["activeOverlay"] = None
         self._current_overlay_state["overlayData"] = {}
         await self._publish_state()
         logger.info("Graphics overlay hidden.")
 
     def _schedule_auto_dismiss(self, duration_ms: int):
+        """
+        Schedules the active overlay to hide after a template-controlled duration.
+
+        Args:
+            duration_ms (int): Delay in milliseconds before hiding the overlay.
+
+        Side Effects:
+            Cancels any previous dismiss task and creates a new asyncio task.
+        """
         if self._dismiss_task and not self._dismiss_task.done():
             self._dismiss_task.cancel()
 
         self._dismiss_task = asyncio.create_task(self._auto_dismiss_loop(duration_ms))
 
     async def _auto_dismiss_loop(self, duration_ms: int):
+        """
+        Waits for the overlay duration and hides it unless superseded.
+
+        Args:
+            duration_ms (int): Delay in milliseconds before hiding the overlay.
+
+        Side Effects:
+            Clears and publishes overlay state when the timer completes.
+        """
         try:
             await asyncio.sleep(duration_ms / 1000.0)
             await self._hide_overlay()
@@ -193,7 +279,12 @@ class GraphicsAdapter:
             pass
 
     async def _publish_state(self):
-        """Publish graphics state to NATS."""
+        """
+        Publishes the current graphics state snapshot to NATS.
+
+        Side Effects:
+            Sends JSON on ``dugout.production.graphics.state``.
+        """
         if not self.nc:
             return
 

@@ -1,7 +1,9 @@
 """
-Commentary Engine for Dugout.ai.
-Generates play-by-play baseball commentary using a local LLM (Ollama)
-and synthesizes it to speech using Piper TTS.
+File: services/ai-orchestrator/commentary_engine.py
+Layer: Worker — Commentary Pipeline
+Purpose: Generates play-by-play text, synthesizes speech, persists commentary history,
+         and publishes commentary state for the dashboard.
+Dependencies: OllamaClient, TTSClient/Piper, MediaManager, DBClient, NATS.
 """
 
 import asyncio
@@ -24,6 +26,16 @@ class CommentaryEngine:
     """
     Commentary Engine that orchestrates LLM generation, TTS synthesis, NATS publishing,
     and commentary audit logs.
+
+    Attributes:
+        db: Database client for player context and commentary history.
+        llm: Local Ollama client used for commentary generation.
+        tts: Piper TTS client used for WAV synthesis.
+        media: Media manager used to resolve commentary output paths.
+        nc: Optional NATS connection for publishing commentary state.
+        muted (bool): Suppresses TTS generation when true.
+        manual_mode (bool): Suppresses automatic commentary generation when true.
+        _game_states (dict): In-memory reduced game state keyed by game ID.
     """
 
     def __init__(self, db_client, llm_client, tts_client, media_manager, nats_conn=None):
@@ -37,15 +49,35 @@ class CommentaryEngine:
         self._game_states = {}  # game_id -> GameState dict
 
     def set_muted(self, muted: bool):
+        """
+        Enables or disables TTS output for generated commentary.
+
+        Args:
+            muted (bool): True to skip speech synthesis while still generating text.
+        """
         self.muted = muted
         logger.info("Commentary engine muted: %s", muted)
 
     def set_manual_mode(self, manual: bool):
+        """
+        Enables or disables automatic commentary generation.
+
+        Args:
+            manual (bool): True to require manual commentary instead of auto generation.
+        """
         self.manual_mode = manual
         logger.info("Commentary engine manual mode: %s", manual)
 
     async def get_or_create_game_state(self, game_id: str) -> dict:
-        """Get or initialize the reduced game state for a game."""
+        """
+        Gets or initializes the reduced game state for a game.
+
+        Args:
+            game_id (str): Game identifier.
+
+        Returns:
+            dict: Mutable in-memory scoreboard, count, bases, and active player state.
+        """
         if game_id not in self._game_states:
             # Initialize with default v1 GameState fields
             self._game_states[game_id] = {
@@ -68,7 +100,16 @@ class CommentaryEngine:
         return self._game_states[game_id]
 
     def update_game_state_from_event(self, state: dict, event: dict):
-        """Locally reduce/apply the event to our game state model."""
+        """
+        Applies a game event to the commentary engine's local game state.
+
+        Args:
+            state (dict): Mutable game state dictionary to update.
+            event (dict): Game event payload from NATS or API ingestion.
+
+        Side Effects:
+            Mutates ``state`` in place to maintain context for commentary prompts.
+        """
         pitch = event.get("pitchResult")
         play = event.get("playOutcome")
         transition = event.get("inningTransition")
@@ -76,6 +117,7 @@ class CommentaryEngine:
         corr = event.get("correction")
 
         if pitch:
+            # Pitch results update count and active matchup context.
             if pitch.get("pitcherId"):
                 state["activePitcherId"] = pitch["pitcherId"]
             if pitch.get("batterId"):
@@ -107,6 +149,7 @@ class CommentaryEngine:
                 state["strikes"] = 0
 
         elif play:
+            # Ball-in-play outcomes reset the count and may advance runners or score runs.
             state["balls"] = 0
             state["strikes"] = 0
             state["outs"] += play.get("outsRecorded", 0)
@@ -116,6 +159,7 @@ class CommentaryEngine:
                 self._add_runs(state, runs)
 
             if state["outs"] >= 3:
+                # Three outs immediately ends the half-inning regardless of hit type.
                 state["balls"] = 0
                 state["strikes"] = 0
                 self._clear_bases(state)
@@ -126,6 +170,7 @@ class CommentaryEngine:
             batter_id = play.get("batterId", state["activeBatterId"])
 
             if "SINGLE" in play_type:
+                # Simplified baseball advancement: singles advance forced runners one base.
                 if state["runnerOnThird"]:
                     self._add_runs(state, 1)
                 state["runnerOnThird"] = state["runnerOnSecond"]
@@ -162,6 +207,7 @@ class CommentaryEngine:
                 state["runnerOnThirdPlayerId"] = batter_id
 
             elif "HOME_RUN" in play_type:
+                # Batter plus all occupied bases score on a home run.
                 scored = 1
                 if state["runnerOnThird"]:
                     scored += 1
@@ -204,12 +250,25 @@ class CommentaryEngine:
             state["awayScore"] = corr.get("awayScore", 0)
 
     def _add_runs(self, state: dict, runs: int):
+        """
+        Adds runs to the batting team.
+
+        Args:
+            state (dict): Mutable game state.
+            runs (int): Number of runs to add.
+        """
         if state["isTop"]:
             state["awayScore"] += runs
         else:
             state["homeScore"] += runs
 
     def _clear_bases(self, state: dict):
+        """
+        Clears all occupied bases in local game state.
+
+        Args:
+            state (dict): Mutable game state.
+        """
         state["runnerOnFirst"] = False
         state["runnerOnFirstPlayerId"] = ""
         state["runnerOnSecond"] = False
@@ -218,6 +277,12 @@ class CommentaryEngine:
         state["runnerOnThirdPlayerId"] = ""
 
     def _transition_half_inning(self, state: dict):
+        """
+        Advances the game to the next half inning.
+
+        Args:
+            state (dict): Mutable game state.
+        """
         state["outs"] = 0
         if state["isTop"]:
             state["isTop"] = False
@@ -226,6 +291,12 @@ class CommentaryEngine:
             state["inning"] += 1
 
     def _check_inning_end(self, state: dict):
+        """
+        Transitions the half inning when three outs have been recorded.
+
+        Args:
+            state (dict): Mutable game state.
+        """
         if state["outs"] >= 3:
             state["balls"] = 0
             state["strikes"] = 0
@@ -233,6 +304,13 @@ class CommentaryEngine:
             self._transition_half_inning(state)
 
     def _advance_runners_on_walk(self, state: dict, batter_id: str):
+        """
+        Advances forced runners for a walk or hit-by-pitch.
+
+        Args:
+            state (dict): Mutable game state.
+            batter_id (str): Batter who should occupy first base.
+        """
         if not state["runnerOnFirst"]:
             state["runnerOnFirst"] = True
             state["runnerOnFirstPlayerId"] = batter_id
@@ -255,8 +333,19 @@ class CommentaryEngine:
 
     async def generate_commentary(self, game_id: str, event_data: dict) -> Optional[dict]:
         """
-        Generate play-by-play commentary text using Ollama (Llama 3.2 1b)
-        and synthesize to speech with Piper.
+        Generates play-by-play commentary for a game event.
+
+        Args:
+            game_id (str): Game identifier.
+            event_data (dict): Event payload used to update state and build context.
+
+        Returns:
+            Optional[dict]: Commentary state published to the dashboard, or None when
+                automatic commentary is disabled.
+
+        Side Effects:
+            Updates local game state, may call Ollama, may write a WAV file, persists
+            commentary history, and publishes commentary state over NATS.
         """
         event_id = event_data.get("eventId", f"evt_{uuid_short()}")
         
@@ -310,7 +399,7 @@ class CommentaryEngine:
         source = "llm"
         llm_info = {}
 
-        # Check if Ollama is available
+        # LLM generation is optional; templates keep the live broadcast path resilient.
         llm_available = await self.llm.check_health()
         if llm_available:
             logger.info("Ollama is available. Generating commentary via LLM...")
@@ -343,6 +432,7 @@ class CommentaryEngine:
         tts_info = {}
 
         if commentary_text and not self.muted:
+            # Commentary audio is written under media so the dashboard can play it via /media.
             audio_dir = os.path.join(self.media.resolve_path("media/audio/commentary"))
             os.makedirs(audio_dir, exist_ok=True)
             
@@ -418,7 +508,19 @@ class CommentaryEngine:
         return commentary_state
 
     async def speak_manual(self, game_id: str, text: str) -> Optional[dict]:
-        """Speak user-supplied manual commentary text."""
+        """
+        Speaks user-supplied manual commentary text.
+
+        Args:
+            game_id (str): Game identifier.
+            text (str): Exact text the operator wants spoken.
+
+        Returns:
+            Optional[dict]: Commentary state published to the dashboard.
+
+        Side Effects:
+            Writes a WAV file, persists commentary history, and publishes NATS state.
+        """
         logger.info("Speaking manual commentary: %s", text)
         state = await self.get_or_create_game_state(game_id)
         event_id = f"manual_{uuid_short()}"
@@ -473,6 +575,20 @@ class CommentaryEngine:
         return commentary_state
 
     def _build_prompt(self, state: dict, event: dict, batter: str, batter_stats: str, pitcher: str, pitcher_stats: str) -> str:
+        """
+        Builds the LLM prompt from scoreboard, player, and event context.
+
+        Args:
+            state (dict): Current reduced game state.
+            event (dict): Game event being described.
+            batter (str): Active batter display name.
+            batter_stats (str): Concise batter stat string.
+            pitcher (str): Active pitcher display name.
+            pitcher_stats (str): Concise pitcher stat string.
+
+        Returns:
+            str: Prompt body passed to Ollama with SYSTEM_PROMPT.
+        """
         half = "top" if state["isTop"] else "bottom"
         runners = []
         if state["runnerOnFirst"]:
@@ -517,7 +633,17 @@ Event description:
         return situation
 
     def _generate_fallback_template(self, event_data: dict, batter: str, pitcher: str) -> str:
-        """Simple template commentary fallback when LLM is slow/offline."""
+        """
+        Generates deterministic template commentary when the LLM is unavailable.
+
+        Args:
+            event_data (dict): Game event payload to summarize.
+            batter (str): Batter display name.
+            pitcher (str): Pitcher display name.
+
+        Returns:
+            str: Short play-by-play sentence, or an empty string if unsupported.
+        """
         pitch = event_data.get("pitchResult")
         play = event_data.get("playOutcome")
 
@@ -559,6 +685,17 @@ Event description:
         return ""
 
     async def _publish_status(self, status: str, text: str, state: dict):
+        """
+        Publishes an interim commentary status to NATS.
+
+        Args:
+            status (str): Current commentary status, such as ``generating``.
+            text (str): Current text, if any.
+            state (dict): Reduced game state used for minimal context.
+
+        Side Effects:
+            Sends JSON on ``dugout.production.commentary.state``.
+        """
         if not self.nc:
             return
         try:
@@ -576,5 +713,11 @@ Event description:
             logger.error("Failed to publish commentary status: %s", e)
 
 def uuid_short() -> str:
+    """
+    Builds a short UUID fragment for commentary event/file IDs.
+
+    Returns:
+        str: Twelve-character hexadecimal UUID fragment.
+    """
     import uuid
     return uuid.uuid4().hex[:12]

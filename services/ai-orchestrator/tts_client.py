@@ -1,6 +1,9 @@
 """
-Piper TTS Client for Dugout.ai Commentary Engine.
-Automatically downloads voice model files if not present.
+File: services/ai-orchestrator/tts_client.py
+Layer: Worker — Text-to-Speech Client
+Purpose: Loads Piper voice models and synthesizes commentary text into WAV files.
+         CommentaryEngine uses it after selecting LLM or template commentary text.
+Dependencies: PiperVoice, httpx model downloads, wave file writer, local models dir.
 """
 
 import logging
@@ -19,7 +22,16 @@ MODEL_URLS = {
 }
 
 class TTSClient:
-    """Piper TTS Wrapper client that handles voice synthesis."""
+    """
+    Piper TTS wrapper that handles model download, loading, and WAV synthesis.
+
+    Attributes:
+        models_dir (str): Directory containing Piper model and config files.
+        model_path (str): Path to the ONNX voice model.
+        config_path (str): Path to the Piper voice config JSON.
+        _voice (Optional[PiperVoice]): Loaded Piper voice instance.
+        _initialized (bool): Whether the voice is ready for synthesis.
+    """
 
     def __init__(self, models_dir: str = None):
         if not models_dir:
@@ -31,7 +43,16 @@ class TTSClient:
         self._initialized = False
 
     async def initialize(self) -> bool:
-        """Download models if missing and load the Piper voice."""
+        """
+        Downloads missing Piper assets and loads the voice model.
+
+        Returns:
+            bool: True when the voice is initialized and ready for synthesis.
+
+        Side Effects:
+            Creates the models directory, downloads model files if absent, and
+            loads the Piper model in an executor thread.
+        """
         if self._initialized:
             return True
 
@@ -44,7 +65,7 @@ class TTSClient:
                 if not os.path.isfile(dest_path):
                     logger.info("Downloading TTS asset %s...", filename)
                     try:
-                        # Follow redirects if Hugging Face does so
+                        # Hugging Face model links redirect to signed file URLs.
                         response = await client.get(url, follow_redirects=True)
                         if response.status_code == 200:
                             with open(dest_path, "wb") as f:
@@ -75,7 +96,20 @@ class TTSClient:
             return False
 
     async def synthesize(self, text: str, output_path: str) -> bool:
-        """Synthesize text to WAV file."""
+        """
+        Synthesizes commentary text into a WAV file.
+
+        Args:
+            text (str): Commentary text to speak.
+            output_path (str): Destination WAV path.
+
+        Returns:
+            bool: True when the WAV file was written successfully.
+
+        Side Effects:
+            Initializes the model if needed, creates output directories, and writes
+            an audio file to disk.
+        """
         if not self._initialized:
             success = await self.initialize()
             if not success:
@@ -91,7 +125,7 @@ class TTSClient:
                 with wave.open(output_path, "wb") as wav_file:
                     self._voice.synthesize_wav(text, wav_file)
 
-            # Synthesize in executor to avoid blocking FastAPI
+            # Piper synthesis is CPU-bound, so keep it off the main event loop.
             await loop.run_in_executor(None, run_synthesis)
             logger.info("Synthesized audio successfully to %s", output_path)
             return True

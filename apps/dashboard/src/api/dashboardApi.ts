@@ -1,10 +1,23 @@
 /**
- * REST API client for dashboard actions.
+ * @file apps/dashboard/src/api/dashboardApi.ts
+ * @layer Frontend — Dashboard REST Client
+ * @description Wraps dashboard calls to the AI orchestrator for overrides, controls,
+ *              command approvals, lineup/player reads, media uploads, and roster CSVs.
+ * @dependencies Browser fetch, FormData, VITE_GATEWAY_URL
  */
 
 const API_BASE_URL =
   (import.meta as any).env?.VITE_GATEWAY_URL || "http://localhost:8080";
 
+/**
+ * Sends a manual player override request to the orchestrator.
+ *
+ * @param gameId - Game identifier being corrected
+ * @param jerseyNumber - Jersey number selected by the operator
+ * @param teamSide - Optional home/away disambiguator
+ * @param reason - Audit reason for the override
+ * @returns Promise resolving to the override result with player context
+ */
 export async function overridePlayer(
   gameId: string,
   jerseyNumber: string,
@@ -27,6 +40,16 @@ export async function overridePlayer(
   return response.json();
 }
 
+/**
+ * Publishes a music-control action through the orchestrator API.
+ *
+ * @param gameId - Game identifier
+ * @param action - Music action to perform
+ * @param playerId - Optional player to play walk-up music for
+ * @param assetId - Optional media asset override
+ * @param fadeMs - Fade duration for fade-out actions
+ * @returns Promise resolving to accepted command metadata
+ */
 export async function controlMusic(
   gameId: string,
   action: 'play' | 'stop' | 'fade_out' | 'emergency_stop',
@@ -51,6 +74,14 @@ export async function controlMusic(
   return response.json();
 }
 
+/**
+ * Publishes a commentary-control action through the orchestrator API.
+ *
+ * @param gameId - Game identifier
+ * @param action - Commentary control action
+ * @param text - Manual text to speak when action is manual
+ * @returns Promise resolving to accepted command metadata
+ */
 export async function controlCommentary(
   gameId: string,
   action: 'mute' | 'unmute' | 'regenerate' | 'manual',
@@ -71,6 +102,13 @@ export async function controlCommentary(
   return response.json();
 }
 
+/**
+ * Approves a pending production command.
+ *
+ * @param commandId - Command queue identifier
+ * @param reason - Optional manager reason
+ * @returns Promise resolving to updated command status
+ */
 export async function approveCommand(commandId: string, reason?: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/commands/${commandId}`, {
     method: "POST",
@@ -86,6 +124,13 @@ export async function approveCommand(commandId: string, reason?: string) {
   return response.json();
 }
 
+/**
+ * Cancels a queued or in-progress production command.
+ *
+ * @param commandId - Command queue identifier
+ * @param reason - Optional cancellation reason
+ * @returns Promise resolving to updated command status
+ */
 export async function cancelCommand(commandId: string, reason?: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/commands/${commandId}`, {
     method: "POST",
@@ -101,6 +146,13 @@ export async function cancelCommand(commandId: string, reason?: string) {
   return response.json();
 }
 
+/**
+ * Fetches the active batting lineup for a team.
+ *
+ * @param gameId - Game identifier
+ * @param teamId - Team identifier
+ * @returns Promise resolving to lineup rows
+ */
 export async function getLineup(gameId: string, teamId: string) {
   const response = await fetch(
     `${API_BASE_URL}/api/v1/lineup?game_id=${encodeURIComponent(gameId)}&team_id=${encodeURIComponent(teamId)}`
@@ -111,6 +163,12 @@ export async function getLineup(gameId: string, teamId: string) {
   return response.json();
 }
 
+/**
+ * Fetches season stats for one player.
+ *
+ * @param playerId - Player identifier
+ * @returns Promise resolving to a player stats row
+ */
 export async function getPlayerStats(playerId: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/players/${playerId}/stats`);
   if (!response.ok) {
@@ -119,6 +177,12 @@ export async function getPlayerStats(playerId: string) {
   return response.json();
 }
 
+/**
+ * Fetches player profile data.
+ *
+ * @param playerId - Player identifier
+ * @returns Promise resolving to player metadata
+ */
 export async function getPlayer(playerId: string) {
   const response = await fetch(`${API_BASE_URL}/api/v1/players/${playerId}`);
   if (!response.ok) {
@@ -127,7 +191,13 @@ export async function getPlayer(playerId: string) {
   return response.json();
 }
 
-
+/**
+ * Fetches media assets with optional filters.
+ *
+ * @param type - Optional asset type filter
+ * @param playerId - Optional player owner filter
+ * @returns Promise resolving to asset list and count
+ */
 export async function getMediaAssets(type?: string, playerId?: string) {
   let url = `${API_BASE_URL}/api/v1/media`;
   const params = [];
@@ -142,6 +212,17 @@ export async function getMediaAssets(type?: string, playerId?: string) {
   return response.json();
 }
 
+/**
+ * Uploads a media asset using multipart form data.
+ *
+ * @param name - Display name for the asset
+ * @param assetType - Asset category used by the backend
+ * @param file - Browser file object to upload
+ * @param playerId - Optional linked player
+ * @param teamId - Optional linked team
+ * @param durationMs - Optional duration metadata
+ * @returns Promise resolving to created asset metadata
+ */
 export async function uploadMediaAsset(
   name: string,
   assetType: string,
@@ -168,6 +249,13 @@ export async function uploadMediaAsset(
   return response.json();
 }
 
+/**
+ * Uploads a roster CSV for bulk player upsert.
+ *
+ * @param teamId - Team identifier
+ * @param file - CSV file containing roster rows
+ * @returns Promise resolving to import status and upsert count
+ */
 export async function uploadRosterCsv(teamId: string, file: File) {
   const formData = new FormData();
   formData.append("team_id", teamId);

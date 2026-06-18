@@ -1,12 +1,27 @@
+/**
+ * @file apps/dashboard/src/components/ScoreboardCompact.tsx
+ * @layer Frontend — Live Scoreboard UI
+ * @description Displays score, inning, count, outs, and occupied bases from reduced
+ *              game state.
+ * @dependencies GameState from sseClient
+ */
+
 import React from 'react';
 import type { GameState } from '../api/sseClient';
 
+/** Props for the compact scoreboard component. */
 type Props = {
   gameState: GameState;
   homeTeamName?: string;
   awayTeamName?: string;
 };
 
+/**
+ * Renders the live scoreboard and base runner diamond.
+ *
+ * @param props - Game state plus optional team display names
+ * @returns React scoreboard card
+ */
 export const ScoreboardCompact: React.FC<Props> = ({
   gameState,
   homeTeamName = "ASHLAND A's",

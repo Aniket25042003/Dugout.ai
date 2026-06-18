@@ -1,3 +1,11 @@
+/**
+ * @file apps/dashboard/src/App.tsx
+ * @layer Frontend — Dashboard State Coordinator
+ * @description Owns live dashboard state from SSE, synchronizes browser audio,
+ *              and wires operator controls to panels/components.
+ * @dependencies connectSSE, dashboardApi controls, dashboard production components
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import { connectSSE } from './api/sseClient';
@@ -88,6 +96,11 @@ const DEFAULT_COMMENTARY_STATE: CommentaryState = {
   source: 'template',
 };
 
+/**
+ * Coordinates the live game-day dashboard experience.
+ *
+ * @returns React application shell for scoreboard, camera, controls, and audit panels
+ */
 function App() {
   const [gameState, setGameState] = useState<GameState>(DEFAULT_STATE);
   const [musicState, setMusicState] = useState<MusicState>(DEFAULT_MUSIC_STATE);
@@ -106,7 +119,11 @@ function App() {
   const lastMusicUrlRef = useRef<string | null>(null);
   const lastCommentaryUrlRef = useRef<string | null>(null);
 
-  // Fetch Next Batters
+  /**
+   * Fetches upcoming batters for the currently batting team.
+   *
+   * @param gState - Latest reduced game state from SSE
+   */
   const fetchNextBatters = useCallback(async (gState: GameState) => {
     try {
       const activeTeamId = gState.isTop ? 'team_opponent' : 'team_ashland';
@@ -116,7 +133,7 @@ function App() {
       const lineup = lineupRes.lineup || [];
       if (lineup.length === 0) return;
 
-      // Extract next 3 batters wrapping around order
+      // Extract next 3 batters, wrapping around the lineup order.
       const total = lineup.length;
       const nextList = [];
       for (let i = 1; i <= 3; i++) {
@@ -129,7 +146,7 @@ function App() {
     }
   }, []);
 
-  // Sync Audio Playback
+  // Sync browser audio playback with orchestrator-published music state.
   useEffect(() => {
     // 1. Music Audio
     if (musicState.status === 'playing' && musicState.filePath) {
@@ -147,7 +164,7 @@ function App() {
         musicAudioRef.current.volume = 1.0;
         musicAudioRef.current.play().catch(e => console.warn("Audio play blocked by browser", e));
       } else if (musicAudioRef.current) {
-        // Sync drift if exceeds 500ms
+        // Correct drift over 500ms so backend state and browser audio stay aligned.
         const drift = Math.abs(musicAudioRef.current.currentTime - (musicState.elapsedMs / 1000.0));
         if (drift > 0.5) {
           musicAudioRef.current.currentTime = musicState.elapsedMs / 1000.0;
@@ -157,7 +174,7 @@ function App() {
         }
       }
     } else if (musicState.status === 'fading' && musicAudioRef.current) {
-      // Fade out volume slowly
+      // Fade out volume gradually while the backend reports fading state.
       const interval = setInterval(() => {
         if (musicAudioRef.current && musicAudioRef.current.volume > 0.1) {
           musicAudioRef.current.volume = Math.max(0, musicAudioRef.current.volume - 0.2);
@@ -177,7 +194,7 @@ function App() {
   }, [musicState]);
 
   useEffect(() => {
-    // 2. Commentary Audio
+    // Commentary audio is one-shot; play only when the published audio path changes.
     if (commentaryState.status === 'speaking' && commentaryState.audioPath) {
       const audioUrl = `${ORCHESTRATOR_URL}${commentaryState.audioPath}`;
       
@@ -195,7 +212,11 @@ function App() {
     }
   }, [commentaryState]);
 
-  // Handle Incoming SSE Frames
+  /**
+   * Applies one SSE frame to dashboard state.
+   *
+   * @param frame - Parsed frame from the event gateway SSE stream
+   */
   const handleFrame = useCallback((frame: SSEFrame) => {
     setConnected(true);
 
@@ -204,6 +225,7 @@ function App() {
       fetchNextBatters(frame.state);
 
       if (frame.event) {
+        // Timeline entries summarize official event payloads for operator audit.
         const evt = frame.event;
         const pitch = evt.pitchResult as any;
         const play = evt.playOutcome as any;
@@ -258,7 +280,7 @@ function App() {
         setPendingCommands((prev) => prev.filter(c => c.command_id !== cmd.command_id));
       }
 
-      // Add low-confidence CV alert if it was enqueued with requires_confirmation
+      // Low-confidence CV detections arrive as pending walk-up music commands.
       if (cmd.status === 'pending_approval' && cmd.command_type === 'play_walkup_music') {
         const alert: AlertItem = {
           id: `alert_${cmd.command_id}`,
@@ -283,7 +305,7 @@ function App() {
     return () => source.close();
   }, [handleFrame]);
 
-  // Command Approval Gate actions
+  // Command approval handlers mirror Postgres queue status in local UI state.
   const handleApproveCommand = async (cmdId: string) => {
     try {
       await approveCommand(cmdId);
@@ -302,7 +324,12 @@ function App() {
     }
   };
 
-  // Resolve CV alerts
+  /**
+   * Resolves an alert by approving or cancelling its linked command.
+   *
+   * @param alertId - Dashboard alert ID derived from command ID
+   * @param action - Confirm approves; override cancels
+   */
   const handleResolveAlert = useCallback(async (alertId: string, action: 'confirm' | 'override') => {
     setAlerts((prev) => prev.map((a) => a.id === alertId ? { ...a, resolved: true } : a));
     const cmdId = alertId.replace('alert_', '');

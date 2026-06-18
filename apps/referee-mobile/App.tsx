@@ -1,3 +1,11 @@
+/**
+ * @file apps/referee-mobile/App.tsx
+ * @layer Mobile — Referee Scoring Interface
+ * @description Provides the referee's touch interface for official pitch, play,
+ *              inning, and correction events sent to the event gateway.
+ * @dependencies React Native UI primitives, Expo StatusBar, event API client, offline queue
+ */
+
 import React, { useState, useCallback } from "react";
 import {
   StyleSheet,
@@ -35,6 +43,13 @@ type GameState = {
   awayScore: number;
 };
 
+/** Local scoreboard/count state mirrored immediately after referee taps. */
+
+/**
+ * Renders the referee mobile scoring app.
+ *
+ * @returns React Native app for creating official game events
+ */
 export default function App() {
   const [gameState, setGameState] = useState<GameState>({
     balls: 0,
@@ -58,11 +73,21 @@ export default function App() {
   const [serverUrl, setServerUrlState] = useState(getGatewayUrl());
 
   const handleServerUrlChange = useCallback((url: string) => {
+    /**
+     * Updates the event gateway URL from the editable server field.
+     *
+     * @param url - New gateway base URL
+     */
     setServerUrlState(url);
     setGatewayUrl(url);
   }, []);
 
   const submitEvent = useCallback(async (event: GameEventPayload) => {
+    /**
+     * Sends an event immediately or queues it for retry when offline.
+     *
+     * @param event - Official game event payload
+     */
     const success = await sendEvent(event);
     if (!success) {
       enqueueEvent(event);
@@ -70,7 +95,7 @@ export default function App() {
       setLastAction(`⚠ Queued offline (${getQueueLength()} pending)`);
     } else {
       setLastAction(`✓ Sent: ${event.pitchResult?.result || event.playOutcome?.type || event.inningTransition ? "inning" : "event"}`);
-      // Try flushing any pending events
+      // A successful send indicates connectivity, so retry older queued events.
       if (getQueueLength() > 0) {
         const flushed = await flushQueue();
         setPendingCount(getQueueLength());
@@ -83,6 +108,11 @@ export default function App() {
 
   const handlePitch = useCallback(
     (result: string) => {
+      /**
+       * Creates a pitch result event and mirrors count changes locally.
+       *
+       * @param result - Contract enum string for the pitch result
+       */
       const event: GameEventPayload = {
         eventId: generateEventId(),
         gameId: GAME_ID,
@@ -99,7 +129,7 @@ export default function App() {
         },
       };
 
-      // Locally update the display count
+      // Local display updates keep the referee UI responsive before gateway replay.
       setGameState((prev) => {
         const next = { ...prev };
         if (result === "PITCH_RESULT_TYPE_BALL") {
@@ -140,6 +170,13 @@ export default function App() {
 
   const handlePlayOutcome = useCallback(
     (type: string, runsScored: number = 0, outsRecorded: number = 0) => {
+      /**
+       * Creates a play outcome event and mirrors score/out changes locally.
+       *
+       * @param type - Contract enum string for the play outcome
+       * @param runsScored - Runs scored on the play
+       * @param outsRecorded - Outs recorded on the play
+       */
       const event: GameEventPayload = {
         eventId: generateEventId(),
         gameId: GAME_ID,
@@ -189,6 +226,9 @@ export default function App() {
   );
 
   const handleInningTransition = useCallback(() => {
+    /**
+     * Advances the local inning half and emits an inning transition event.
+     */
     setGameState((prev) => {
       const next = { ...prev };
       next.balls = 0;
@@ -222,6 +262,9 @@ export default function App() {
   }, [submitEvent]);
 
   const handleCorrection = useCallback(() => {
+    /**
+     * Emits a manual correction event from modal values and updates local display.
+     */
     const event: GameEventPayload = {
       eventId: generateEventId(),
       gameId: GAME_ID,

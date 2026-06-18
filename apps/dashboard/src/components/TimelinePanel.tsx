@@ -1,10 +1,24 @@
+/**
+ * @file apps/dashboard/src/components/TimelinePanel.tsx
+ * @layer Frontend — Event Timeline UI
+ * @description Displays the chronological game event/audit feed received through SSE.
+ * @dependencies TimelineEntry from sseClient
+ */
+
 import React from 'react';
 import type { TimelineEntry } from '../api/sseClient';
 
+/** Props for the event timeline panel. */
 type Props = {
   timeline: TimelineEntry[];
 };
 
+/**
+ * Renders the game event timeline.
+ *
+ * @param props - Timeline entries derived from streamed game events
+ * @returns React timeline card
+ */
 export const TimelinePanel: React.FC<Props> = ({ timeline }) => {
   return (
     <div className="card timeline-panel-card">

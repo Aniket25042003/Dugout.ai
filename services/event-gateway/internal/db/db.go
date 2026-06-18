@@ -1,3 +1,8 @@
+// File: services/event-gateway/internal/db/db.go
+// Layer: Data Access — Event Gateway Persistence
+// Purpose: Persists protobuf game events to Postgres and rehydrates event history
+// for SSE replay and state reconstruction.
+// Dependencies: database/sql, protojson, timestamppb, generated Go contracts.
 package db
 
 import (
@@ -10,14 +15,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Database wraps the shared SQL connection used by gateway handlers.
 type Database struct {
 	db *sql.DB
 }
 
+// New creates a Database around an existing sql.DB connection.
 func New(db *sql.DB) *Database {
 	return &Database{db: db}
 }
 
+// SaveGameEvent stores an official game event and its typed payload as JSON.
 func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent) error {
 	occurredAt := event.OccurredAt.AsTime()
 	receivedAt := event.ReceivedAt.AsTime()
@@ -27,6 +35,7 @@ func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent)
 	var err error
 
 	if event.Payload != nil {
+		// Store the protobuf oneof discriminator as a queryable event_type column.
 		switch p := event.Payload.(type) {
 		case *dugoutv1.GameEvent_PitchResult:
 			eventType = "pitch_result"
@@ -63,6 +72,7 @@ func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent)
 		payloadBytes = []byte("{}")
 	}
 
+	// Inserts the immutable event log row used for replay and audit.
 	query := `
 		INSERT INTO game_events (
 			event_id, game_id, source, source_device_id, event_type, 
@@ -79,7 +89,9 @@ func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent)
 	return err
 }
 
+// GetGameEvents loads a game's events in replay order and rebuilds protobuf payloads.
 func (d *Database) GetGameEvents(ctx context.Context, gameID string) ([]*dugoutv1.GameEvent, error) {
+	// Sequence is primary ordering; occurred_at provides a stable fallback for equal sequence.
 	query := `
 		SELECT event_id, game_id, source, source_device_id, event_type, 
 		       occurred_at, received_at, sequence, payload, confidence, 
@@ -98,10 +110,10 @@ func (d *Database) GetGameEvents(ctx context.Context, gameID string) ([]*dugoutv
 	for rows.Next() {
 		var (
 			eventID, gameIdVal, source, sourceDeviceID, eventType, authority, correlationID string
-			occurredAt, receivedAt time.Time
-			sequence int64
-			confidence float64
-			payloadJSON []byte
+			occurredAt, receivedAt                                                          time.Time
+			sequence                                                                        int64
+			confidence                                                                      float64
+			payloadJSON                                                                     []byte
 		)
 		err := rows.Scan(
 			&eventID, &gameIdVal, &source, &sourceDeviceID, &eventType,
@@ -126,6 +138,7 @@ func (d *Database) GetGameEvents(ctx context.Context, gameID string) ([]*dugoutv
 		}
 
 		if len(payloadJSON) > 0 {
+			// Rehydrate the stored JSON payload into the protobuf oneof matching event_type.
 			switch eventType {
 			case "pitch_result":
 				var p dugoutv1.PitchResultPayload

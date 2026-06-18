@@ -1,3 +1,8 @@
+// File: services/event-gateway/internal/reducer/reducer_test.go
+// Layer: Tests — Baseball Game State Reducer
+// Purpose: Verifies pitch, play, correction, substitution, and inning-transition
+// reducer behavior for replayed event streams.
+// Dependencies: Go testing package and generated Dugout contracts.
 package reducer
 
 import (
@@ -6,17 +11,18 @@ import (
 	"github.com/Aniket25042003/Dugout/packages/contracts/go/dugout/v1"
 )
 
+// Verifies that four balls reset the count, place the batter on first, and advance order.
 func TestReduce_PitchBall(t *testing.T) {
 	initialState := &dugoutv1.GameState{
-		GameId:          "game_1",
-		Balls:           0,
-		Strikes:         0,
-		Outs:            0,
-		ActiveBatterId:  "batter_1",
-		ActivePitcherId: "pitcher_1",
+		GameId:           "game_1",
+		Balls:            0,
+		Strikes:          0,
+		Outs:             0,
+		ActiveBatterId:   "batter_1",
+		ActivePitcherId:  "pitcher_1",
 		BattingIndexAway: 1,
-		IsTop:           true,
-		Inning:          1,
+		IsTop:            true,
+		Inning:           1,
 	}
 
 	event := &dugoutv1.GameEvent{
@@ -56,17 +62,18 @@ func TestReduce_PitchBall(t *testing.T) {
 	}
 }
 
+// Verifies that three strikes reset the count, record an out, and advance order.
 func TestReduce_PitchStrikeout(t *testing.T) {
 	initialState := &dugoutv1.GameState{
-		GameId:          "game_1",
-		Balls:           0,
-		Strikes:         0,
-		Outs:            0,
-		ActiveBatterId:  "batter_1",
-		ActivePitcherId: "pitcher_1",
+		GameId:           "game_1",
+		Balls:            0,
+		Strikes:          0,
+		Outs:             0,
+		ActiveBatterId:   "batter_1",
+		ActivePitcherId:  "pitcher_1",
 		BattingIndexAway: 1,
-		IsTop:           true,
-		Inning:          1,
+		IsTop:            true,
+		Inning:           1,
 	}
 
 	event := &dugoutv1.GameEvent{
@@ -96,6 +103,7 @@ func TestReduce_PitchStrikeout(t *testing.T) {
 	}
 }
 
+// Verifies base advancement and scoring for doubles followed by home runs.
 func TestReduce_PlayOutcome_Hits(t *testing.T) {
 	// Start with base runner on 1st
 	initialState := &dugoutv1.GameState{
@@ -174,6 +182,7 @@ func TestReduce_PlayOutcome_Hits(t *testing.T) {
 	}
 }
 
+// Verifies that manual corrections overwrite count, outs, and score.
 func TestReduce_Correction(t *testing.T) {
 	initialState := &dugoutv1.GameState{
 		GameId:    "game_1",
@@ -206,6 +215,7 @@ func TestReduce_Correction(t *testing.T) {
 	}
 }
 
+// Verifies that substitutions update runner and active batter IDs.
 func TestReduce_Substitution(t *testing.T) {
 	initialState := &dugoutv1.GameState{
 		GameId:                "game_1",
@@ -238,6 +248,7 @@ func TestReduce_Substitution(t *testing.T) {
 	}
 }
 
+// Verifies that the third out transitions from top to bottom of the inning.
 func TestReduce_ThreeOutsTransition(t *testing.T) {
 	initialState := &dugoutv1.GameState{
 		GameId:           "game_1",

@@ -1,3 +1,8 @@
+// File: services/event-gateway/internal/reducer/reducer.go
+// Layer: Domain Logic — Baseball Game State Reducer
+// Purpose: Applies immutable GameEvent payloads to GameState so the gateway can
+// replay event history into current scoreboard, count, bases, and active players.
+// Dependencies: generated Go contracts and protobuf cloning.
 package reducer
 
 import (
@@ -47,6 +52,7 @@ func Reduce(state *dugoutv1.GameState, event *dugoutv1.GameEvent) *dugoutv1.Game
 }
 
 func applyPitchResult(state *dugoutv1.GameState, pitch *dugoutv1.PitchResultPayload) {
+	// Pitch results maintain count and active matchup context between play outcomes.
 	if pitch == nil {
 		return
 	}
@@ -99,6 +105,7 @@ func applyPitchResult(state *dugoutv1.GameState, pitch *dugoutv1.PitchResultPayl
 }
 
 func applyPlayOutcome(state *dugoutv1.GameState, outcome *dugoutv1.PlayOutcomePayload) {
+	// Play outcomes finalize balls in play: score, outs, base movement, and order.
 	if outcome == nil {
 		return
 	}
@@ -202,6 +209,7 @@ func applyPlayOutcome(state *dugoutv1.GameState, outcome *dugoutv1.PlayOutcomePa
 }
 
 func applyInningTransition(state *dugoutv1.GameState, transition *dugoutv1.InningTransitionPayload) {
+	// Explicit inning transitions override inferred half-inning state from outs.
 	if transition == nil {
 		return
 	}
@@ -213,10 +221,11 @@ func applyInningTransition(state *dugoutv1.GameState, transition *dugoutv1.Innin
 }
 
 func applySubstitution(state *dugoutv1.GameState, sub *dugoutv1.SubstitutionPayload) {
+	// Substitutions keep IDs stable across bases and active batter/pitcher slots.
 	if sub == nil {
 		return
 	}
-	
+
 	// Replace player ID on bases if matching
 	if state.RunnerOnFirst && state.RunnerOnFirstPlayerId == sub.PlayerOutId {
 		state.RunnerOnFirstPlayerId = sub.PlayerInId
@@ -238,6 +247,7 @@ func applySubstitution(state *dugoutv1.GameState, sub *dugoutv1.SubstitutionPayl
 }
 
 func applyClockControl(state *dugoutv1.GameState, clock *dugoutv1.ClockControlPayload) {
+	// Clock controls are pass-through game-clock state, separate from baseball scoring.
 	if clock == nil {
 		return
 	}
@@ -252,6 +262,7 @@ func applyClockControl(state *dugoutv1.GameState, clock *dugoutv1.ClockControlPa
 }
 
 func applyCorrection(state *dugoutv1.GameState, corr *dugoutv1.GameCorrectionPayload) {
+	// Corrections are authoritative manual overrides from the referee app.
 	if corr == nil {
 		return
 	}
@@ -265,11 +276,13 @@ func applyCorrection(state *dugoutv1.GameState, corr *dugoutv1.GameCorrectionPay
 // Helper functions
 
 func resetCount(state *dugoutv1.GameState) {
+	// Counts reset after walks, strikeouts, balls in play, and inning transitions.
 	state.Balls = 0
 	state.Strikes = 0
 }
 
 func clearBases(state *dugoutv1.GameState) {
+	// Clearing both occupancy booleans and IDs prevents stale runner labels.
 	state.RunnerOnFirst = false
 	state.RunnerOnFirstPlayerId = ""
 	state.RunnerOnSecond = false
@@ -279,6 +292,7 @@ func clearBases(state *dugoutv1.GameState) {
 }
 
 func addRuns(state *dugoutv1.GameState, runs int32) {
+	// Top half means the away team is batting; bottom half means home is batting.
 	if state.IsTop {
 		state.AwayScore += runs
 	} else {
@@ -287,6 +301,7 @@ func addRuns(state *dugoutv1.GameState, runs int32) {
 }
 
 func advanceRunnersOnWalk(state *dugoutv1.GameState, batterID string) {
+	// Walks only force occupied bases ahead of the batter.
 	if !state.RunnerOnFirst {
 		state.RunnerOnFirst = true
 		state.RunnerOnFirstPlayerId = batterID
@@ -316,6 +331,7 @@ func advanceRunnersOnWalk(state *dugoutv1.GameState, batterID string) {
 }
 
 func advanceBattingIndex(state *dugoutv1.GameState) {
+	// Batting order is modeled as a 1-based nine-player cycle.
 	if state.IsTop {
 		// Away team is batting
 		state.BattingIndexAway = (state.BattingIndexAway % 9) + 1
@@ -326,6 +342,7 @@ func advanceBattingIndex(state *dugoutv1.GameState) {
 }
 
 func checkHalfInningEnd(state *dugoutv1.GameState) {
+	// Three outs end the half inning and clear count/base state.
 	if state.Outs >= 3 {
 		resetCount(state)
 		clearBases(state)
@@ -334,6 +351,7 @@ func checkHalfInningEnd(state *dugoutv1.GameState) {
 }
 
 func transitionHalfInning(state *dugoutv1.GameState) {
+	// Moving from bottom to top advances the inning number.
 	state.Outs = 0
 	if state.IsTop {
 		state.IsTop = false

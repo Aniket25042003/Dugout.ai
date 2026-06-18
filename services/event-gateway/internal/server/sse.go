@@ -1,3 +1,7 @@
+// File: services/event-gateway/internal/server/sse.go
+// Layer: API Gateway — Server-Sent Events Broker
+// Purpose: Tracks connected dashboard SSE clients and broadcasts replay/live frames.
+// Dependencies: net/http streaming, sync locks, per-client buffered channels.
 package server
 
 import (
@@ -6,6 +10,7 @@ import (
 	"sync"
 )
 
+// SSEBroker manages connected SSE clients and non-blocking broadcasts.
 type SSEBroker struct {
 	clients    map[chan []byte]bool
 	clientsMu  sync.RWMutex
@@ -13,6 +18,7 @@ type SSEBroker struct {
 	unregister chan chan []byte
 }
 
+// NewSSEBroker creates and starts an SSE broker.
 func NewSSEBroker() *SSEBroker {
 	broker := &SSEBroker{
 		clients:    make(map[chan []byte]bool),
@@ -23,6 +29,7 @@ func NewSSEBroker() *SSEBroker {
 	return broker
 }
 
+// listen serializes client registration and unregistration.
 func (b *SSEBroker) listen() {
 	for {
 		select {
@@ -44,6 +51,7 @@ func (b *SSEBroker) listen() {
 	}
 }
 
+// Broadcast sends a message to every connected SSE client without blocking on slow clients.
 func (b *SSEBroker) Broadcast(msg []byte) {
 	b.clientsMu.RLock()
 	defer b.clientsMu.RUnlock()
@@ -51,11 +59,12 @@ func (b *SSEBroker) Broadcast(msg []byte) {
 		select {
 		case client <- msg:
 		default:
-			// Prevent blocking if a client is slow
+			// Drop the frame for a slow client rather than blocking live updates globally.
 		}
 	}
 }
 
+// ServeHTTPWithInitial writes replay frames, registers the client, and streams live frames.
 func (b *SSEBroker) ServeHTTPWithInitial(w http.ResponseWriter, r *http.Request, initialMessages [][]byte) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -68,7 +77,7 @@ func (b *SSEBroker) ServeHTTPWithInitial(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	// 1. Flush historical replayed events/state to the client first
+	// Historical replay gives a newly opened dashboard the same state as long-lived clients.
 	for _, msg := range initialMessages {
 		_, err := w.Write([]byte("data: "))
 		if err != nil {
@@ -79,7 +88,7 @@ func (b *SSEBroker) ServeHTTPWithInitial(w http.ResponseWriter, r *http.Request,
 	}
 	flusher.Flush()
 
-	// 2. Register for real-time updates
+	// Buffered channel smooths brief client/network stalls without blocking Broadcast.
 	messageChan := make(chan []byte, 10)
 	b.register <- messageChan
 

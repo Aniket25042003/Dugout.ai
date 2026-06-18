@@ -1,9 +1,18 @@
+"""
+File: services/ai-orchestrator/tests/test_command_queue.py
+Layer: Tests — Production Command Queue
+Purpose: Verifies command queue priority handling, payload dispatch, and cancellation
+         behavior without requiring Postgres or NATS.
+Dependencies: pytest, AsyncMock, CommandQueue.
+"""
+
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from command_queue import CommandQueue
 
 @pytest.mark.asyncio
+# Verifies that queued commands are dispatched through the registered handler.
 async def test_command_queue_priority_and_cooldown():
     # Mock DB client
     db = AsyncMock()
@@ -47,6 +56,7 @@ async def test_command_queue_priority_and_cooldown():
     handler_mock.assert_called_with("cmd_1", "play_walkup_music", {"playerId": "player_1"})
 
 @pytest.mark.asyncio
+# Verifies that cancellation delegates to the DB client and returns success.
 async def test_command_queue_cancellation():
     db = AsyncMock()
     nc = AsyncMock()

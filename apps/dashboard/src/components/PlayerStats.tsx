@@ -1,11 +1,25 @@
+/**
+ * @file apps/dashboard/src/components/PlayerStats.tsx
+ * @layer Frontend — Matchup Stats UI
+ * @description Fetches and displays active batter and pitcher profile/stat context.
+ * @dependencies getPlayer, getPlayerStats APIs
+ */
+
 import React, { useState, useEffect } from 'react';
 import { getPlayerStats, getPlayer } from '../api/dashboardApi';
 
+/** Props for the active matchup statistics panel. */
 type Props = {
   activeBatterId: string | null;
   activePitcherId: string | null;
 };
 
+/**
+ * Renders the active batter-versus-pitcher matchup statistics.
+ *
+ * @param props - Active batter and pitcher IDs from game state
+ * @returns React matchup statistics card
+ */
 export const PlayerStats: React.FC<Props> = ({
   activeBatterId,
   activePitcherId,

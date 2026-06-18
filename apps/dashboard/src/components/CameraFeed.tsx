@@ -1,7 +1,16 @@
+/**
+ * @file apps/dashboard/src/components/CameraFeed.tsx
+ * @layer Frontend — Live Video and Overlay Surface
+ * @description Shows the camera feed from WHEP/file/URL sources and layers graphics
+ *              overlays on top of the video surface.
+ * @dependencies GraphicsOverlay, GraphicsState, browser WebRTC APIs
+ */
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GraphicsOverlay } from './GraphicsOverlay';
 import type { GraphicsState } from '../api/sseClient';
 
+/** Props for the camera feed and overlay surface. */
 type Props = {
   graphicsState: GraphicsState;
   onHideOverlay?: () => void;
@@ -9,6 +18,12 @@ type Props = {
 
 type VideoSourceType = 'live' | 'file' | 'url';
 
+/**
+ * Renders the production camera monitor with selectable video source and overlay.
+ *
+ * @param props - Graphics state and optional overlay-hide callback
+ * @returns React camera feed component
+ */
 export const CameraFeed: React.FC<Props> = ({
   graphicsState,
   onHideOverlay,
@@ -32,7 +47,7 @@ export const CameraFeed: React.FC<Props> = ({
     // In local development composed environment, it's typically:
     const whepUrl = 'http://localhost:8889/homeplatecam/whep';
 
-    // Simple RTCPeerConnection to fetch and play the WHEP stream
+    // WHEP uses a one-way WebRTC offer/answer exchange to receive MediaMTX video.
     let peerConnection: RTCPeerConnection | null = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });

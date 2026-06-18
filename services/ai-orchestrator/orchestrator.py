@@ -1,12 +1,10 @@
 """
-AI Orchestrator for Dugout.ai (Phase 3).
-
-Subscribes to NATS game events and CV observations.
-Orchestrates:
-- CommandQueue for priority, cooldowns, conflicts.
-- MusicAdapter for walk-up music state.
-- GraphicsAdapter for overlay and scoreboard updates.
-- CommentaryEngine for local LLM + TTS radio broadcast commentary.
+File: services/ai-orchestrator/orchestrator.py
+Layer: Worker — AI Orchestrator Daemon
+Purpose: Subscribes to game/CV/control NATS subjects and coordinates production
+         command queueing, music playback, graphics overlays, and commentary.
+Dependencies: NATS, DBClient, CommandQueue, MusicAdapter, GraphicsAdapter,
+              CommentaryEngine, OllamaClient, TTSClient.
 """
 
 import asyncio
@@ -36,7 +34,20 @@ NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
 CV_CONFIDENCE_THRESHOLD = float(os.getenv("CV_CONFIDENCE_THRESHOLD", "0.70"))
 
 class OrchestratorDaemon:
-    """Main background daemon for Dugout.ai production automation."""
+    """
+    Main background daemon for Dugout.ai production automation.
+
+    Attributes:
+        nc: NATS connection used for all subscriptions and publications.
+        db: Database client shared by adapters and engines.
+        media: Media manager for audio/image asset resolution.
+        llm: Ollama client used by commentary generation.
+        tts: Piper TTS client used by commentary generation.
+        cmd_queue: CommandQueue instance dispatching adapter work.
+        music_adapter: Adapter responsible for walk-up playback state.
+        graphics_adapter: Adapter responsible for dashboard overlay state.
+        commentary_engine: Engine responsible for commentary text/audio.
+    """
 
     def __init__(self):
         self.nc = None
@@ -53,6 +64,13 @@ class OrchestratorDaemon:
         self._running = False
 
     async def start(self):
+        """
+        Starts database, NATS, adapters, queue processing, and subscriptions.
+
+        Side Effects:
+            Opens DB/NATS connections, starts the command queue loop, initializes
+            TTS in the background, and subscribes to game/CV/control subjects.
+        """
         logger.info("Initializing Orchestrator Daemon services...")
         await self.db.connect()
         self.nc = await nats.connect(NATS_URL)
@@ -74,7 +92,7 @@ class OrchestratorDaemon:
         # Initialize TTS (triggers download of voice models)
         asyncio.create_task(self.tts.initialize())
 
-        # Subscriptions
+        # Subscriptions connect ingestion/control events to production automation.
         await self.nc.subscribe("dugout.game.*.events", cb=self.handle_game_event)
         await self.nc.subscribe("dugout.game.*.observations", cb=self.handle_cv_observation)
         await self.nc.subscribe("dugout.production.music.control", cb=self.handle_music_control)
@@ -84,6 +102,12 @@ class OrchestratorDaemon:
         logger.info("Orchestrator Daemon successfully started.")
 
     async def stop(self):
+        """
+        Stops background processing and closes external connections.
+
+        Side Effects:
+            Cancels command queue processing and closes LLM, NATS, and DB resources.
+        """
         logger.info("Shutting down Orchestrator Daemon...")
         self._running = False
         if self.cmd_queue:
@@ -96,7 +120,16 @@ class OrchestratorDaemon:
         logger.info("Orchestrator Daemon shut down.")
 
     async def handle_game_event(self, msg):
-        """Process official game events from NATS."""
+        """
+        Processes official game events and enqueues production actions.
+
+        Args:
+            msg: NATS message containing a JSON game event.
+
+        Side Effects:
+            Updates commentary state, enqueues scoreboard updates, and may enqueue
+            player intro overlays when batter or pitcher changes.
+        """
         try:
             data = json.loads(msg.data.decode())
         except json.JSONDecodeError:
@@ -110,8 +143,7 @@ class OrchestratorDaemon:
         # Get previous state for comparison (e.g. active batter changes)
         state_before = (await self.commentary_engine.get_or_create_game_state(game_id)).copy()
 
-        # 1. Trigger Commentary Generation (LLM + TTS)
-        # Note: run in background to keep LAN latency low
+        # Commentary runs in the background so ingestion-to-dashboard latency stays low.
         asyncio.create_task(self.commentary_engine.generate_commentary(game_id, data))
 
         # Get updated state
@@ -137,7 +169,7 @@ class OrchestratorDaemon:
             priority=3,
         )
 
-        # 3. Check for new Batter stepping up
+        # New active batter is the cue for a batter intro overlay.
         new_batter_id = state_after["activeBatterId"]
         if new_batter_id and new_batter_id != state_before.get("activeBatterId"):
             logger.info("New batter detected at plate: %s. Enqueuing batter intro overlay.", new_batter_id)
@@ -150,7 +182,7 @@ class OrchestratorDaemon:
                 priority=4,
             )
 
-        # 4. Check for new Pitcher
+        # New active pitcher is the cue for a pitcher intro overlay.
         new_pitcher_id = state_after["activePitcherId"]
         if new_pitcher_id and new_pitcher_id != state_before.get("activePitcherId"):
             logger.info("New pitcher detected: %s. Enqueuing pitcher intro overlay.", new_pitcher_id)
@@ -164,7 +196,16 @@ class OrchestratorDaemon:
             )
 
     async def handle_cv_observation(self, msg):
-        """Process CV observations and dispatch production actions or alerts."""
+        """
+        Processes CV jersey observations and dispatches walk-up music commands.
+
+        Args:
+            msg: NATS message containing a JSON CV observation.
+
+        Side Effects:
+            Looks up players by jersey number and enqueues confirmed or
+            manager-approval walk-up music commands.
+        """
         try:
             data = json.loads(msg.data.decode())
         except json.JSONDecodeError:
@@ -185,7 +226,7 @@ class OrchestratorDaemon:
         # Try to resolve player from DB by jersey number
         player = await self.db.get_player_by_jersey(game_id, jersey_number)
 
-        # Check confidence threshold
+        # Low-confidence detections require manager confirmation before music plays.
         if confidence < CV_CONFIDENCE_THRESHOLD:
             # Enqueue alert command for manager review
             alert_payload = {
@@ -210,7 +251,7 @@ class OrchestratorDaemon:
                 logger.warning("LOW CONFIDENCE: Enqueued walk-up music for %s (#%s) awaiting confirmation", player["name"], jersey_number)
             return
 
-        # High confidence — trigger directly
+        # High-confidence detections trigger walk-up music directly.
         if not player:
             logger.warning("Jersey #%s not found in roster for game %s, skipping walk-up", jersey_number, game_id)
             return
@@ -228,7 +269,15 @@ class OrchestratorDaemon:
         logger.info("Walk-up music command enqueued for player %s (#%s)", player["name"], jersey_number)
 
     async def handle_music_control(self, msg):
-        """Handle manual music playback control from dashboard."""
+        """
+        Handles manual music playback control messages from the dashboard.
+
+        Args:
+            msg: NATS message containing action, game, player, and fade settings.
+
+        Side Effects:
+            Enqueues music commands or emergency-stop cancellation work.
+        """
         try:
             req = json.loads(msg.data.decode())
             action = req.get("action")
@@ -251,7 +300,7 @@ class OrchestratorDaemon:
                     command_type="play_walkup_music",
                     target="music_adapter",
                     payload={"playerId": player_id, "assetId": asset_id, "fadeInMs": 250, "maxDurationMs": 15000},
-                    priority=2,  # Manual override is higher priority
+                    priority=2,  # Manual override is higher priority than automation.
                 )
             elif action == "stop":
                 await self.cmd_queue.enqueue(
@@ -259,7 +308,7 @@ class OrchestratorDaemon:
                     command_type="stop_music",
                     target="music_adapter",
                     payload={},
-                    priority=1,  # Stop commands have highest priority
+                    priority=1,  # Stop commands have highest priority for operator safety.
                 )
             elif action == "fade_out":
                 await self.cmd_queue.enqueue(
@@ -283,7 +332,15 @@ class OrchestratorDaemon:
             logger.error("Error handling manual music control: %s", e)
 
     async def handle_commentary_control(self, msg):
-        """Handle manual commentary control from dashboard."""
+        """
+        Handles manual commentary control messages from the dashboard.
+
+        Args:
+            msg: NATS message containing mute, unmute, manual, or regenerate action.
+
+        Side Effects:
+            Changes commentary engine mode or starts background speech generation.
+        """
         try:
             req = json.loads(msg.data.decode())
             action = req.get("action")
@@ -315,6 +372,12 @@ class OrchestratorDaemon:
 
 
 async def main():
+    """
+    Runs the orchestrator daemon until interrupted.
+
+    Side Effects:
+        Starts all daemon resources and keeps the process alive.
+    """
     logger.info("Starting AI Orchestrator Daemon (Phase 3)...")
     daemon = OrchestratorDaemon()
     try:

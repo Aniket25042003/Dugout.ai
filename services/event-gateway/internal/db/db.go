@@ -89,6 +89,17 @@ func (d *Database) SaveGameEvent(ctx context.Context, event *dugoutv1.GameEvent)
 	return err
 }
 
+// UpdatePitchSpeed persists a radar-measured pitch speed onto the event payload.
+func (d *Database) UpdatePitchSpeed(ctx context.Context, eventID string, speed float64) error {
+	query := `
+		UPDATE game_events 
+		SET payload = jsonb_set(payload, '{speed_mph}', $1::jsonb)
+		WHERE event_id = $2
+	`
+	_, err := d.db.ExecContext(ctx, query, speed, eventID)
+	return err
+}
+
 // GetGameEvents loads a game's events in replay order and rebuilds protobuf payloads.
 func (d *Database) GetGameEvents(ctx context.Context, gameID string) ([]*dugoutv1.GameEvent, error) {
 	// Sequence is primary ordering; occurred_at provides a stable fallback for equal sequence.

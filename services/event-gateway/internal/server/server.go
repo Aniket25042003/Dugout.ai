@@ -90,6 +90,15 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Println("Subscribed to NATS subject: dugout.commands.status")
 	}
 
+	// Radar speed readings update pitch event payloads and rebroadcast game state.
+	subRadar, err := s.nc.Subscribe("dugout.game.*.radar", func(msg *nats.Msg) {
+		s.handleRadarMsg(msg)
+	})
+	if err == nil {
+		s.natsSubs = append(s.natsSubs, subRadar)
+		log.Println("Subscribed to NATS subject: dugout.game.*.radar")
+	}
+
 	return nil
 }
 
@@ -315,4 +324,70 @@ func (s *Server) loadOrCreateGameState(ctx context.Context, gameID string) (*dug
 
 	s.games[gameID] = state
 	return state, nil
+}
+
+type RadarMessage struct {
+	EventID  string  `json:"eventId"`
+	GameID   string  `json:"gameId"`
+	SpeedMph float64 `json:"speedMph"`
+}
+
+func (s *Server) handleRadarMsg(msg *nats.Msg) {
+	var radar RadarMessage
+	if err := json.Unmarshal(msg.Data, &radar); err != nil {
+		log.Printf("Error unmarshaling radar NATS payload: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := s.db.UpdatePitchSpeed(ctx, radar.EventID, radar.SpeedMph); err != nil {
+		log.Printf("Error updating pitch speed in DB for event %s: %v", radar.EventID, err)
+		return
+	}
+	log.Printf("Successfully saved pitch speed: %.1f MPH for event %s", radar.SpeedMph, radar.EventID)
+
+	events, err := s.db.GetGameEvents(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Failed to load game events after radar speed update: %v", err)
+		return
+	}
+
+	var updatedEvt *dugoutv1.GameEvent
+	for _, e := range events {
+		if e.EventId == radar.EventID {
+			updatedEvt = e
+			break
+		}
+	}
+
+	if updatedEvt == nil {
+		log.Printf("Could not find updated event %s in database events", radar.EventID)
+		return
+	}
+
+	state, err := s.loadOrCreateGameState(ctx, radar.GameID)
+	if err != nil {
+		log.Printf("Error getting game state for broadcast: %v", err)
+		return
+	}
+
+	eventJSON, err := protojson.Marshal(updatedEvt)
+	if err != nil {
+		return
+	}
+	stateJSON, err := protojson.Marshal(state)
+	if err != nil {
+		return
+	}
+
+	frame := map[string]interface{}{
+		"type":  "game_state",
+		"event": json.RawMessage(eventJSON),
+		"state": json.RawMessage(stateJSON),
+	}
+	frameBytes, _ := json.Marshal(frame)
+	s.sse.Broadcast(frameBytes)
+	log.Printf("Broadcasted updated pitch speed (%.1f MPH) frame to SSE clients.", radar.SpeedMph)
 }

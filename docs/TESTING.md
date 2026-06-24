@@ -106,7 +106,7 @@ flowchart TD
 
 ## Talking points
 
-- Honest gap: **no frontend tests** despite 11 dashboard components.
+- Honest gap: **no frontend tests** yet.
 - Reducer has good pitch/play/inning coverage but no test for `ClockControl` or `ManualOverride`.
 - `make test` gracefully echoes "No tests" for missing dashboard test folder.
 - Integration scenario tests listed in `CLAUDE.md` (network reconnect, duplicate events, emergency stop) are **not yet implemented**.

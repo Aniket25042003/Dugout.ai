@@ -1,6 +1,6 @@
 # Backend Overview
 
-**One-liner:** Three services — Go gateway, Python orchestrator, Python cv-node.
+**One-liner:** Three services - Go gateway, Python orchestrator, Python cv-node.
 
 ## Why it exists
 
@@ -10,12 +10,14 @@ Latency-sensitive event routing stays in Go. Production automation (music, graph
 
 ### Service map
 
-| Service | Language | Port | Entry | Role |
-|---------|----------|------|-------|------|
-| event-gateway | Go | 8080 | `cmd/main.go` | HTTP ingest, SSE, reverse-proxy |
-| ai-orchestrator API | Python/FastAPI | 8000 | `main.py` | REST for roster, media, commands |
-| ai-orchestrator daemon | Python/asyncio | — | `orchestrator.py` | NATS subscriber, production automation |
-| cv-node | Python | — | `main.py` | RTSP → jersey detection → NATS |
+
+| Service                | Language       | Port | Entry             | Role                                   |
+| ---------------------- | -------------- | ---- | ----------------- | -------------------------------------- |
+| event-gateway          | Go             | 8080 | `cmd/main.go`     | HTTP ingest, SSE, reverse-proxy        |
+| ai-orchestrator API    | Python/FastAPI | 8000 | `main.py`         | REST for roster, media, commands       |
+| ai-orchestrator daemon | Python/asyncio | —    | `orchestrator.py` | NATS subscriber, production automation |
+| cv-node                | Python         | —    | `main.py`         | RTSP → jersey detection → NATS         |
+
 
 ### Directory structure
 
@@ -47,28 +49,32 @@ services/
 
 ### Infrastructure (`infra/`)
 
-| Path | Role |
-|------|------|
+
+| Path                         | Role                                   |
+| ---------------------------- | -------------------------------------- |
 | `compose/docker-compose.yml` | Postgres 16, NATS 2.10 (-js), MediaMTX |
-| `db/migrations/` | SQL schema up/down |
-| `db/seeds_phase3.sql` | Pilot roster, walk-up assets, lineups |
+| `db/migrations/`             | SQL schema up/down                     |
+| `db/seeds_phase3.sql`        | Pilot roster, walk-up assets, lineups  |
+
 
 ### Environment variables
 
-From [`env.template`](../env.template):
+From `[env.template](../env.template)`:
 
-| Variable | Default | Configures |
-|----------|---------|------------|
-| `DATABASE_URL` | `postgres://dugout_admin:...@localhost:5432/dugout` | All DB connections |
-| `NATS_URL` | `nats://localhost:4222` | NATS pub/sub |
-| `EVENT_GATEWAY_PORT` | `8080` | Gateway HTTP port |
-| `AI_ORCHESTRATOR_URL` | `http://localhost:8000` | Gateway reverse-proxy target |
-| `AI_ORCHESTRATOR_PORT` | `8000` | FastAPI port |
-| `CV_NODE_CAMERA_RTSP_STREAM` | `rtsp://localhost:8554/home_plate_cam` | cv-node RTSP source |
-| `CV_CONFIDENCE_THRESHOLD` | `0.70` | Orchestrator CV gate (in code, not env.template) |
-| `MEDIA_BASE_PATH` | `../../media` | Orchestrator static file mount |
-| `JWT_SECRET` | placeholder | **Not implemented** |
-| `REFEREE_AUTH_TOKEN` | placeholder | **Not implemented** |
+
+| Variable                     | Default                                             | Configures                                       |
+| ---------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| `DATABASE_URL`               | `postgres://dugout_admin:...@localhost:5432/dugout` | All DB connections                               |
+| `NATS_URL`                   | `nats://localhost:4222`                             | NATS pub/sub                                     |
+| `EVENT_GATEWAY_PORT`         | `8080`                                              | Gateway HTTP port                                |
+| `AI_ORCHESTRATOR_URL`        | `http://localhost:8000`                             | Gateway reverse-proxy target                     |
+| `AI_ORCHESTRATOR_PORT`       | `8000`                                              | FastAPI port                                     |
+| `CV_NODE_CAMERA_RTSP_STREAM` | `rtsp://localhost:8554/home_plate_cam`              | cv-node RTSP source                              |
+| `CV_CONFIDENCE_THRESHOLD`    | `0.70`                                              | Orchestrator CV gate (in code, not env.template) |
+| `MEDIA_BASE_PATH`            | `../../media`                                       | Orchestrator static file mount                   |
+| `JWT_SECRET`                 | placeholder                                         | **Not implemented**                              |
+| `REFEREE_AUTH_TOKEN`         | placeholder                                         | **Not implemented**                              |
+
 
 ### Local dev startup order
 
@@ -114,12 +120,14 @@ flowchart TD
   RTSP --> Detector
 ```
 
+
+
 ## Key code callouts
 
-- [`services/event-gateway/cmd/main.go`](../services/event-gateway/cmd/main.go) — service wiring and proxy routes
-- [`services/ai-orchestrator/orchestrator.py`](../services/ai-orchestrator/orchestrator.py) — `OrchestratorDaemon.start()`
-- [`services/ai-orchestrator/main.py`](../services/ai-orchestrator/main.py) — FastAPI lifecycle and all REST endpoints
-- [`packages/contracts/`](../packages/contracts/) — shared protobuf source of truth
+- `[services/event-gateway/cmd/main.go](../services/event-gateway/cmd/main.go)` — service wiring and proxy routes
+- `[services/ai-orchestrator/orchestrator.py](../services/ai-orchestrator/orchestrator.py)` — `OrchestratorDaemon.start()`
+- `[services/ai-orchestrator/main.py](../services/ai-orchestrator/main.py)` — FastAPI lifecycle and all REST endpoints
+- `[packages/contracts/](../packages/contracts/)` — shared protobuf source of truth
 
 ## Tech decisions
 
@@ -132,3 +140,4 @@ flowchart TD
 - Makefile `build` compiles gateway and dashboard but does not start orchestrator daemon automatically.
 - `piper` package used by `tts_client.py` is not listed in `requirements.txt`.
 - No Redis, Celery, or Kubernetes in v1 — Docker Compose only.
+
